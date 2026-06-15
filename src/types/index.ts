@@ -2,6 +2,13 @@ export type GuestStatus = 'pending' | 'confirmed' | 'declined';
 
 export type GuestRelation = 'groom' | 'bride' | 'colleague' | 'friend' | 'other';
 
+export interface Family {
+  id: string;
+  name: string;
+  relation: GuestRelation;
+  notes: string;
+}
+
 export interface Guest {
   id: string;
   name: string;
@@ -83,6 +90,7 @@ export interface InspirationImage {
 
 export interface AppState {
   guests: Guest[];
+  families: Family[];
   tables: Table[];
   seatingRules: SeatingRule[];
   timeline: TimelineItem[];

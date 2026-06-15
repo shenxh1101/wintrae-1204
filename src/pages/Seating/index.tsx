@@ -10,6 +10,7 @@ import {
   Edit2,
   X,
   GripVertical,
+  AlertCircle,
 } from 'lucide-react';
 import useAppStore from '@/store/useAppStore';
 import Button from '@/components/Button';
@@ -28,6 +29,7 @@ const SeatingPage = () => {
     assignGuestToTable,
     addSeatingRule,
     deleteSeatingRule,
+    checkSeatingRules,
   } = useAppStore();
 
   const [showTableModal, setShowTableModal] = useState(false);
@@ -35,6 +37,7 @@ const SeatingPage = () => {
   const [editingTable, setEditingTable] = useState<Table | null>(null);
   const [draggedGuest, setDraggedGuest] = useState<string | null>(null);
   const [dragOverTable, setDragOverTable] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   const [tableForm, setTableForm] = useState({
     tableNumber: 1,
@@ -47,6 +50,11 @@ const SeatingPage = () => {
     type: 'together' as 'together' | 'avoid',
     guestIds: [] as string[],
   });
+
+  const showToast = (type: 'error' | 'success', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const unassignedGuests = useMemo(() => {
     return guests.filter((g) => !g.tableId && g.status !== 'declined');
@@ -112,7 +120,13 @@ const SeatingPage = () => {
     e.preventDefault();
     setDragOverTable(null);
     if (draggedGuest) {
-      assignGuestToTable(draggedGuest, tableId);
+      const result = assignGuestToTable(draggedGuest, tableId);
+      if (!result.allowed) {
+        showToast('error', result.reason || '无法安排到该桌');
+      } else {
+        const guest = guests.find((g) => g.id === draggedGuest);
+        showToast('success', `${guest?.name || '宾客'} 已安排`);
+      }
       setDraggedGuest(null);
     }
   };
@@ -120,9 +134,17 @@ const SeatingPage = () => {
   const handleDropUnassigned = (e: React.DragEvent) => {
     e.preventDefault();
     if (draggedGuest) {
-      assignGuestToTable(draggedGuest, null);
+      assignGuestToTable(draggedGuest, null, null, true);
+      const guest = guests.find((g) => g.id === draggedGuest);
+      showToast('success', `${guest?.name || '宾客'} 已移出座位`);
       setDraggedGuest(null);
     }
+  };
+
+  const handleRemoveFromTable = (guestId: string) => {
+    assignGuestToTable(guestId, null, null, true);
+    const guest = guests.find((g) => g.id === guestId);
+    showToast('success', `${guest?.name || '宾客'} 已移出座位`);
   };
 
   const handleAddRule = () => {
@@ -158,14 +180,114 @@ const SeatingPage = () => {
     (g) => g.status !== 'declined'
   );
 
+  const getTableDragState = (tableId: string) => {
+    if (!draggedGuest || dragOverTable !== tableId) return null;
+    const check = checkSeatingRules(draggedGuest, tableId);
+    const table = tables.find((t) => t.id === tableId);
+    const currentCount = getTableGuests(tableId).length;
+    const isFull = table ? currentCount >= table.capacity : false;
+    return {
+      allowed: check.allowed && !isFull,
+      reason: !check.allowed ? check.reason : isFull ? '该桌已满' : null,
+    };
+  };
+
+  const renderSeats = (table: Table) => {
+    const tableGuests = getTableGuests(table.id);
+    const capacity = table.capacity;
+    
+    const baseSize = 192;
+    const tableCircleInset = capacity <= 8 ? 40 : capacity <= 12 ? 36 : 32;
+    const seatSize = capacity <= 8 ? 40 : capacity <= 12 ? 36 : capacity <= 16 ? 32 : 28;
+    const radius = (baseSize / 2) - tableCircleInset;
+    const center = baseSize / 2;
+
+    const seats = [];
+    for (let i = 0; i < capacity; i++) {
+      const angle = (i / capacity) * Math.PI * 2 - Math.PI / 2;
+      const x = Math.cos(angle) * radius + center;
+      const y = Math.sin(angle) * radius + center;
+      const guest = tableGuests[i];
+
+      if (guest) {
+        seats.push(
+          <div
+            key={`seat-${i}-${guest.id}`}
+            draggable
+            onDragStart={(e) => handleDragStart(e, guest.id)}
+            onDragEnd={() => setDraggedGuest(null)}
+            className={`absolute rounded-full bg-white border-2 border-rose-300 flex items-center justify-center font-medium text-espresso cursor-grab active:cursor-grabbing hover:scale-110 hover:border-rose-500 transition-all shadow-sm z-10 ${
+              draggedGuest === guest.id ? 'opacity-50' : ''
+            }`}
+            style={{
+              left: x,
+              top: y,
+              width: seatSize,
+              height: seatSize,
+              marginLeft: -seatSize / 2,
+              marginTop: -seatSize / 2,
+              fontSize: seatSize <= 32 ? 11 : 12,
+            }}
+            title={`${guest.name} (${getRelationLabel(guest.relation)})`}
+          >
+            {guest.name.charAt(0)}
+          </div>
+        );
+      } else {
+        seats.push(
+          <div
+            key={`seat-empty-${i}`}
+            className="absolute rounded-full bg-white/40 border-2 border-dashed border-champagne-200 flex items-center justify-center text-champagne-300 transition-all"
+            style={{
+              left: x,
+              top: y,
+              width: seatSize,
+              height: seatSize,
+              marginLeft: -seatSize / 2,
+              marginTop: -seatSize / 2,
+              fontSize: seatSize <= 32 ? 9 : 10,
+            }}
+          >
+            {i + 1}
+          </div>
+        );
+      }
+    }
+    return seats;
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg animate-slide-in ${
+            toast.type === 'error'
+              ? 'bg-red-500 text-white'
+              : 'bg-green-500 text-white'
+          }`}
+        >
+          {toast.type === 'error' ? (
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          ) : (
+            <UserPlus className="w-5 h-5 flex-shrink-0" />
+          )}
+          <span className="text-sm font-medium">{toast.message}</span>
+          <button
+            onClick={() => setToast(null)}
+            className="ml-2 p-1 rounded-full hover:bg-white/20 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-serif text-3xl font-bold text-espresso">席位安排</h1>
           <p className="mt-2 text-espresso/60">
-            拖拽宾客到对应的餐桌，轻松安排座位
+            拖拽宾客到对应的餐桌，设置排座规则自动校验
           </p>
         </div>
         <div className="flex gap-3">
@@ -274,31 +396,60 @@ const SeatingPage = () => {
             {sortedTables.map((table) => {
               const tableGuests = getTableGuests(table.id);
               const isOver = tableGuests.length > table.capacity;
+              const dragState = getTableDragState(table.id);
+              const isDragAllowed = dragState === null ? true : dragState.allowed;
+              const showBlocked = dragState !== null && !isDragAllowed;
 
               return (
                 <div
                   key={table.id}
-                  className={`bg-white rounded-2xl shadow-soft overflow-hidden transition-all ${
-                    dragOverTable === table.id ? 'ring-2 ring-champagne-400 scale-[1.02]' : ''
+                  className={`bg-white rounded-2xl shadow-soft overflow-hidden transition-all relative ${
+                    dragOverTable === table.id
+                      ? showBlocked
+                        ? 'ring-4 ring-red-400 scale-[1.02]'
+                        : 'ring-4 ring-green-400 scale-[1.02]'
+                      : ''
                   } ${isOver ? 'ring-2 ring-red-300' : ''}`}
                   onDragOver={(e) => handleDragOver(e, table.id)}
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, table.id)}
                 >
+                  {showBlocked && (
+                    <div className="absolute top-4 right-4 z-20 bg-red-500 text-white text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 animate-pulse">
+                      <Ban className="w-3.5 h-3.5" />
+                      {dragState?.reason || '不符合规则'}
+                    </div>
+                  )}
+
                   {/* Table Header */}
-                  <div className="p-4 bg-gradient-to-r from-champagne-50 to-champagne-100 border-b border-champagne-100">
+                  <div className={`p-4 border-b border-champagne-100 transition-colors ${
+                    showBlocked
+                      ? 'bg-gradient-to-r from-red-50 to-red-100'
+                      : dragOverTable === table.id
+                        ? 'bg-gradient-to-r from-green-50 to-champagne-50'
+                        : 'bg-gradient-to-r from-champagne-50 to-champagne-100'
+                  }`}>
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="w-8 h-8 rounded-full bg-champagne-400 text-white flex items-center justify-center text-sm font-bold">
+                          <span className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-bold ${
+                            showBlocked
+                              ? 'bg-red-400'
+                              : dragOverTable === table.id
+                                ? 'bg-green-400'
+                                : 'bg-champagne-400'
+                          }`}>
                             {table.tableNumber}
                           </span>
                           <h3 className="font-semibold text-espresso">
                             {table.tableName || `第${table.tableNumber}桌`}
                           </h3>
                         </div>
-                        <p className="text-xs text-espresso/50 mt-1">
+                        <p className={`text-xs mt-1 ${
+                          isOver ? 'text-red-600 font-medium' : 'text-espresso/50'
+                        }`}>
                           {tableGuests.length}/{table.capacity} 人
+                          {isOver && ' · 超员'}
                           {table.notes && ` · ${table.notes}`}
                         </p>
                       </div>
@@ -320,60 +471,81 @@ const SeatingPage = () => {
                   </div>
 
                   {/* Table Visualization */}
-                  <div className="p-6 flex justify-center">
-                    <div className="relative w-48 h-48">
+                  <div className={`p-6 flex justify-center transition-colors ${
+                    showBlocked ? 'bg-red-50/30' : ''
+                  }`}>
+                    <div className="relative" style={{ width: 192, height: 192 }}>
                       {/* Table circle */}
-                      <div className="absolute inset-6 rounded-full bg-gradient-to-br from-champagne-200 to-champagne-300 shadow-inner flex items-center justify-center">
-                        <span className="text-champagne-700 font-serif font-semibold">
+                      <div
+                        className={`absolute rounded-full shadow-inner flex items-center justify-center transition-colors ${
+                          showBlocked
+                            ? 'bg-gradient-to-br from-red-200 to-red-300'
+                            : isOver
+                              ? 'bg-gradient-to-br from-red-200 to-amber-200'
+                              : 'bg-gradient-to-br from-champagne-200 to-champagne-300'
+                        }`}
+                        style={{
+                          inset: table.capacity <= 8 ? 48 : table.capacity <= 12 ? 44 : table.capacity <= 16 ? 40 : 36,
+                        }}
+                      >
+                        <span className={`font-serif font-semibold ${
+                          showBlocked ? 'text-red-700' : 'text-champagne-700'
+                        }`}>
                           {table.tableNumber}号桌
                         </span>
                       </div>
                       {/* Seats */}
-                      {tableGuests.slice(0, 10).map((guest, idx) => {
-                        const angle = (idx / 10) * Math.PI * 2 - Math.PI / 2;
-                        const radius = 84;
-                        const x = Math.cos(angle) * radius + 96;
-                        const y = Math.sin(angle) * radius + 96;
-
-                        return (
-                          <div
-                            key={guest.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, guest.id)}
-                            onDragEnd={() => setDraggedGuest(null)}
-                            className={`absolute w-10 h-10 -ml-5 -mt-5 rounded-full bg-white border-2 border-rose-300 flex items-center justify-center text-xs font-medium text-espresso cursor-grab active:cursor-grabbing hover:scale-110 hover:border-rose-500 transition-all shadow-sm ${
-                              draggedGuest === guest.id ? 'opacity-50' : ''
-                            }`}
-                            style={{ left: x, top: y }}
-                            title={`${guest.name} (${getRelationLabel(guest.relation)})`}
-                          >
-                            {guest.name.charAt(0)}
-                          </div>
-                        );
-                      })}
+                      {renderSeats(table)}
                     </div>
                   </div>
 
                   {/* Guest List */}
                   <div className="px-4 pb-4">
                     <div className="max-h-32 overflow-y-auto space-y-1">
-                      {tableGuests.map((guest) => (
-                        <div
-                          key={guest.id}
-                          className="flex items-center gap-2 text-sm py-1.5 px-2 rounded-lg hover:bg-rose-50 group"
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-champagne-400" />
-                          <span className="flex-1 text-espresso/80 truncate">
-                            {guest.name}
-                          </span>
-                          <button
-                            onClick={() => assignGuestToTable(guest.id, null)}
-                            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-espresso/40 hover:text-red-500 transition-all"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
+                      {tableGuests.length === 0 ? (
+                        <p className="text-sm text-espresso/30 text-center py-2">暂无宾客，请拖拽安排</p>
+                      ) : (
+                        tableGuests.map((guest) => {
+                          const hasConflict = seatingRules.some((rule) => {
+                            if (!rule.guestIds.includes(guest.id)) return false;
+                            const othersInRule = rule.guestIds.filter((id) => id !== guest.id);
+                            const othersInTable = othersInRule.filter((id) =>
+                              tableGuests.some((g) => g.id === id)
+                            );
+                            if (rule.type === 'avoid' && othersInTable.length > 0) return true;
+                            return false;
+                          });
+
+                          return (
+                            <div
+                              key={guest.id}
+                              className={`flex items-center gap-2 text-sm py-1.5 px-2 rounded-lg group transition-colors ${
+                                hasConflict
+                                  ? 'bg-red-50 border border-red-100'
+                                  : 'hover:bg-rose-50'
+                              }`}
+                            >
+                              {hasConflict ? (
+                                <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                              ) : (
+                                <span className="w-1.5 h-1.5 rounded-full bg-champagne-400 flex-shrink-0" />
+                              )}
+                              <span className={`flex-1 truncate ${
+                                hasConflict ? 'text-red-700 font-medium' : 'text-espresso/80'
+                              }`}>
+                                {guest.name}
+                                {hasConflict && <span className="text-xs text-red-500 ml-1">(冲突)</span>}
+                              </span>
+                              <button
+                                onClick={() => handleRemoveFromTable(guest.id)}
+                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-espresso/40 hover:text-red-500 transition-all"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 </div>
@@ -465,6 +637,7 @@ const SeatingPage = () => {
               <input
                 type="number"
                 min="1"
+                max="30"
                 value={tableForm.capacity}
                 onChange={(e) =>
                   setTableForm({
@@ -474,6 +647,7 @@ const SeatingPage = () => {
                 }
                 className="w-full px-4 py-2.5 border border-rose-200 rounded-xl text-espresso focus:outline-none focus:ring-2 focus:ring-rose-200"
               />
+              <p className="text-xs text-espresso/40 mt-1">建议 6-20 人，支持大桌展示</p>
             </div>
           </div>
           <div>

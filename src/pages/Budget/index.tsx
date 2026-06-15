@@ -19,6 +19,9 @@ import {
   Shirt,
   Flower2,
   Package,
+  FileText,
+  Calendar,
+  AlertCircle,
 } from 'lucide-react';
 import useAppStore from '@/store/useAppStore';
 import Button from '@/components/Button';
@@ -29,6 +32,8 @@ import {
   calculateBudgetStats,
   getPaymentStatusLabel,
   getPaymentStatusColor,
+  summarizeByVendor,
+  VendorSummary,
 } from '@/utils/helpers';
 
 const iconMap: Record<string, any> = {
@@ -63,7 +68,8 @@ const BudgetPage = () => {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'budget' | 'inspiration'>('budget');
+  const [activeTab, setActiveTab] = useState<'budget' | 'contract' | 'inspiration'>('budget');
+  const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [itemForm, setItemForm] = useState({
@@ -94,7 +100,19 @@ const BudgetPage = () => {
     });
   }, [budgetCategories, budgetItems]);
 
+  const vendorSummaries = useMemo(
+    () => summarizeByVendor(budgetItems, payments),
+    [budgetItems, payments]
+  );
+
   const pendingPayments = payments.filter((p) => p.status === 'pending');
+
+  const urgentVendors = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return vendorSummaries
+      .filter((v) => v.nextPaymentDue && v.nextPaymentDue.dueDate <= today)
+      .sort((a, b) => (a.nextPaymentDue?.dueDate || '').localeCompare(b.nextPaymentDue?.dueDate || ''));
+  }, [vendorSummaries]);
 
   const handleOpenAddItem = (categoryId?: string) => {
     setEditingItem(null);
@@ -213,6 +231,221 @@ const BudgetPage = () => {
     return IconComponent;
   };
 
+  const formatDueDate = (date: string) => {
+    if (!date) return '未设置';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(date);
+    const diff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diff < 0) return `逾期 ${Math.abs(diff)} 天`;
+    if (diff === 0) return '今天到期';
+    if (diff <= 7) return `${diff} 天后`;
+    return date;
+  };
+
+  const isDueDateUrgent = (date: string) => {
+    if (!date) return false;
+    const today = new Date().toISOString().split('T')[0];
+    return date <= today;
+  };
+
+  const renderVendorCard = (vendor: VendorSummary) => {
+    const isExpanded = expandedVendor === vendor.vendor;
+    const paymentProgress = vendor.totalActual > 0
+      ? Math.min((vendor.totalPaid / vendor.totalActual) * 100, 100)
+      : 0;
+    const nextDue = vendor.nextPaymentDue;
+    const isUrgent = nextDue ? isDueDateUrgent(nextDue.dueDate) : false;
+
+    return (
+      <div
+        key={vendor.vendor}
+        className={`bg-white rounded-2xl shadow-soft overflow-hidden transition-all ${
+          isUrgent ? 'ring-2 ring-red-200' : ''
+        }`}
+      >
+        <button
+          onClick={() => setExpandedVendor(isExpanded ? null : vendor.vendor)}
+          className="w-full p-5 text-left hover:bg-rose-50/30 transition-colors"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  isUrgent
+                    ? 'bg-gradient-to-br from-red-100 to-red-200'
+                    : 'bg-gradient-to-br from-champagne-100 to-rose-100'
+                }`}>
+                  <Building2 className={`w-5 h-5 ${
+                    isUrgent ? 'text-red-500' : 'text-champagne-600'
+                  }`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-semibold text-espresso truncate">
+                    {vendor.vendor}
+                  </h3>
+                  <p className="text-xs text-espresso/50">
+                    {vendor.items.length} 个项目 · {vendor.payments.length} 笔付款
+                  </p>
+                </div>
+              </div>
+
+              {nextDue && (
+                <div className={`flex items-center gap-1.5 text-xs mb-3 ${
+                  isUrgent ? 'text-red-600 font-medium' : 'text-amber-600'
+                }`}>
+                  {isUrgent ? (
+                    <AlertCircle className="w-3.5 h-3.5" />
+                  ) : (
+                    <Calendar className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    下一笔：{nextDue.name} {formatCurrency(nextDue.amount)} · {formatDueDate(nextDue.dueDate)}
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-espresso/60">
+                  <span>付款进度</span>
+                  <span className="font-medium text-espresso">
+                    {formatCurrency(vendor.totalPaid)} / {formatCurrency(vendor.totalActual)}
+                  </span>
+                </div>
+                <div className="h-2 bg-rose-50 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      paymentProgress >= 100
+                        ? 'bg-gradient-to-r from-green-400 to-green-500'
+                        : 'bg-gradient-to-r from-rose-400 to-champagne-400'
+                    }`}
+                    style={{ width: `${paymentProgress}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={vendor.totalPending > 0 ? 'text-amber-600' : 'text-green-600'}>
+                    {vendor.totalPending > 0
+                      ? `待付 ${formatCurrency(vendor.totalPending)}`
+                      : '已结清 ✓'}
+                  </span>
+                  {vendor.totalBudgeted > 0 && vendor.totalActual > vendor.totalBudgeted && (
+                    <span className="text-red-500 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      超支 {formatCurrency(vendor.totalActual - vendor.totalBudgeted)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <ChevronDown
+              className={`w-5 h-5 text-espresso/40 flex-shrink-0 transition-transform ${
+                isExpanded ? 'rotate-180' : ''
+              }`}
+            />
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="border-t border-rose-50 px-5 pb-5 space-y-4">
+            <div>
+              <h4 className="text-sm font-medium text-espresso/80 mb-2 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-champagne-500" />
+                关联项目
+              </h4>
+              <div className="space-y-2">
+                {vendor.items.map((item) => (
+                  <div
+                    key={item.name + item.contractNo}
+                    className="p-3 bg-rose-50/50 rounded-xl"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="font-medium text-espresso text-sm">{item.name}</p>
+                        {item.contractNo && (
+                          <p className="text-xs text-espresso/50 mt-0.5">
+                            合同号：{item.contractNo}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right text-xs">
+                        <p className="text-espresso/50">
+                          预算 {formatCurrency(item.budgeted)}
+                        </p>
+                        <p className={`font-medium ${
+                          item.actual > item.budgeted ? 'text-red-500' : 'text-espresso'
+                        }`}>
+                          实际 {formatCurrency(item.actual)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {vendor.payments.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-espresso/80 mb-2 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-500" />
+                  付款节点
+                </h4>
+                <div className="space-y-1.5">
+                  {vendor.payments
+                    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+                    .map((p, idx) => {
+                      const pUrgent = p.status === 'pending' && isDueDateUrgent(p.dueDate);
+                      return (
+                        <div
+                          key={`${p.name}-${idx}`}
+                          className={`flex items-center gap-3 p-2.5 rounded-xl text-sm ${
+                            pUrgent ? 'bg-red-50' : 'bg-rose-50/30'
+                          }`}
+                        >
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            p.status === 'paid'
+                              ? 'bg-green-400'
+                              : pUrgent
+                                ? 'bg-red-400 animate-pulse'
+                                : 'bg-amber-400'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <p className={`font-medium truncate ${
+                              pUrgent ? 'text-red-700' : 'text-espresso'
+                            }`}>
+                              {p.name}
+                            </p>
+                            <p className="text-xs text-espresso/50">
+                              {p.dueDate || '无截止日期'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-medium ${
+                              p.status === 'paid'
+                                ? 'text-green-600 line-through'
+                                : pUrgent
+                                  ? 'text-red-600'
+                                  : 'text-espresso'
+                            }`}>
+                              {formatCurrency(p.amount)}
+                            </p>
+                            <p className={`text-xs ${
+                              p.status === 'paid' ? 'text-green-500' : 'text-espresso/40'
+                            }`}>
+                              {getPaymentStatusLabel(p.status)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -236,6 +469,22 @@ const BudgetPage = () => {
             预算
           </button>
           <button
+            onClick={() => setActiveTab('contract')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'contract'
+                ? 'bg-gradient-to-r from-rose-400 to-champagne-400 text-white shadow-sm'
+                : 'text-espresso/60 hover:text-espresso'
+            }`}
+          >
+            <FileText className="w-4 h-4 inline mr-2" />
+            合同
+            {urgentVendors.length > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 text-xs bg-red-500 text-white rounded-full">
+                {urgentVendors.length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('inspiration')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               activeTab === 'inspiration'
@@ -249,7 +498,7 @@ const BudgetPage = () => {
         </div>
       </div>
 
-      {activeTab === 'budget' ? (
+      {activeTab === 'budget' && (
         <>
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -546,7 +795,156 @@ const BudgetPage = () => {
             })}
           </div>
         </>
-      ) : (
+      )}
+
+      {activeTab === 'contract' && (
+        <>
+          {/* Contract Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-gradient-to-br from-champagne-50 to-champagne-100 rounded-2xl p-5 shadow-soft">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-espresso/60">供应商数</p>
+                  <p className="mt-2 text-2xl font-bold text-espresso font-serif">
+                    {vendorSummaries.filter(v => v.vendor !== '未指定供应商').length}
+                    <span className="text-sm font-normal text-espresso/50 ml-1">家</span>
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center">
+                  <Building2 className="w-6 h-6 text-champagne-500" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-rose-50 to-rose-100 rounded-2xl p-5 shadow-soft">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-espresso/60">合同项目数</p>
+                  <p className="mt-2 text-2xl font-bold text-espresso font-serif">
+                    {budgetItems.length}
+                    <span className="text-sm font-normal text-espresso/50 ml-1">项</span>
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center">
+                  <FileText className="w-6 h-6 text-rose-500" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl p-5 shadow-soft">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-espresso/60">已付款合计</p>
+                  <p className="mt-2 text-2xl font-bold text-espresso font-serif">
+                    {formatCurrency(
+                      vendorSummaries.reduce((s, v) => s + v.totalPaid, 0)
+                    )}
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center">
+                  <CheckCircle className="w-6 h-6 text-green-500" />
+                </div>
+              </div>
+            </div>
+
+            <div className={`rounded-2xl p-5 shadow-soft ${
+              urgentVendors.length > 0
+                ? 'bg-gradient-to-br from-red-50 to-red-100'
+                : 'bg-gradient-to-br from-amber-50 to-amber-100'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-espresso/60">
+                    {urgentVendors.length > 0 ? '紧急待付' : '待付款合计'}
+                  </p>
+                  <p className={`mt-2 text-2xl font-bold font-serif ${
+                    urgentVendors.length > 0 ? 'text-red-600' : 'text-amber-600'
+                  }`}>
+                    {formatCurrency(
+                      vendorSummaries.reduce((s, v) => s + v.totalPending, 0)
+                    )}
+                  </p>
+                  <p className="text-xs text-espresso/50 mt-1">
+                    {urgentVendors.length > 0
+                      ? `${urgentVendors.length} 家供应商需尽快处理`
+                      : `${pendingPayments.length} 笔待付款`}
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center">
+                  {urgentVendors.length > 0 ? (
+                    <AlertCircle className="w-6 h-6 text-red-500" />
+                  ) : (
+                    <Clock className="w-6 h-6 text-amber-500" />
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {urgentVendors.length > 0 && (
+            <div className="bg-red-50 border border-red-100 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                <h3 className="font-semibold text-red-700">
+                  需要尽快处理的付款节点
+                </h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {urgentVendors.map((v) => (
+                  <div
+                    key={v.vendor + '-urgent'}
+                    className="bg-white rounded-xl p-4 border border-red-100"
+                  >
+                    <p className="font-medium text-espresso text-sm">{v.vendor}</p>
+                    {v.nextPaymentDue && (
+                      <>
+                        <p className="text-xs text-red-600 mt-1 font-medium">
+                          {v.nextPaymentDue.name} · {formatCurrency(v.nextPaymentDue.amount)}
+                        </p>
+                        <p className="text-xs text-red-500 mt-0.5">
+                          {formatDueDate(v.nextPaymentDue.dueDate)}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-serif text-xl font-semibold text-espresso">
+                供应商合同一览
+              </h2>
+              <Button onClick={() => handleOpenAddItem()}>
+                <Plus className="w-4 h-4" />
+                添加预算项
+              </Button>
+            </div>
+
+            {vendorSummaries.length === 0 ? (
+              <div className="bg-white rounded-2xl p-16 text-center shadow-soft">
+                <Building2 className="w-16 h-16 text-espresso/20 mx-auto mb-4" />
+                <p className="text-espresso/50 mb-4">还没有供应商数据</p>
+                <Button onClick={() => handleOpenAddItem()}>
+                  <Plus className="w-4 h-4" />
+                  添加第一个预算项
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {urgentVendors.map(renderVendorCard)}
+                {vendorSummaries
+                  .filter((v) => !urgentVendors.find((u) => u.vendor === v.vendor))
+                  .map(renderVendorCard)}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'inspiration' && (
         /* Inspiration Tab */
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -713,7 +1111,7 @@ const BudgetPage = () => {
                   setItemForm({ ...itemForm, vendor: e.target.value })
                 }
                 className="w-full px-4 py-2.5 border border-rose-200 rounded-xl text-espresso focus:outline-none focus:ring-2 focus:ring-rose-200"
-                placeholder="商家名称"
+                placeholder="商家名称（用于合同汇总）"
               />
             </div>
             <div>

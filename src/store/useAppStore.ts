@@ -1,8 +1,18 @@
 import { create } from 'zustand';
-import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage } from '@/types';
+import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage, Family } from '@/types';
 import { loadFromStorage, saveToStorage, resetToMockData, generateId } from '@/utils';
 
+interface SeatingCheckResult {
+  allowed: boolean;
+  reason?: string;
+}
+
 interface AppStore extends AppState {
+  // Families
+  addFamily: (family: Omit<Family, 'id'>) => string;
+  updateFamily: (id: string, family: Partial<Family>) => void;
+  deleteFamily: (id: string) => void;
+  
   // Guests
   addGuest: (guest: Omit<Guest, 'id'>) => void;
   updateGuest: (id: string, guest: Partial<Guest>) => void;
@@ -13,11 +23,12 @@ interface AppStore extends AppState {
   addTable: (table: Omit<Table, 'id'>) => void;
   updateTable: (id: string, table: Partial<Table>) => void;
   deleteTable: (id: string) => void;
-  assignGuestToTable: (guestId: string, tableId: string | null, seatNumber?: number | null) => void;
+  assignGuestToTable: (guestId: string, tableId: string | null, seatNumber?: number | null, skipRules?: boolean) => SeatingCheckResult;
   
   // Seating Rules
   addSeatingRule: (rule: Omit<SeatingRule, 'id'>) => void;
   deleteSeatingRule: (id: string) => void;
+  checkSeatingRules: (guestId: string, tableId: string) => SeatingCheckResult;
   
   // Timeline
   addTimelineItem: (item: Omit<TimelineItem, 'id'>) => void;
@@ -52,15 +63,42 @@ const useAppStore = create<AppStore>((set, get) => {
   const initialState = loadFromStorage();
   
   const saveState = () => {
-    const { guests, tables, seatingRules, timeline, budgetCategories, budgetItems, payments, inspirationImages, weddingDate, coupleNames } = get();
+    const { guests, families, tables, seatingRules, timeline, budgetCategories, budgetItems, payments, inspirationImages, weddingDate, coupleNames } = get();
     saveToStorage({
-      guests, tables, seatingRules, timeline, budgetCategories, budgetItems,
+      guests, families, tables, seatingRules, timeline, budgetCategories, budgetItems,
       payments, inspirationImages, weddingDate, coupleNames,
     });
   };
 
   return {
     ...initialState,
+
+    // Families
+    addFamily: (family) => {
+      const id = generateId();
+      const newFamily = { ...family, id };
+      set((state) => ({ families: [...state.families, newFamily] }));
+      saveState();
+      return id;
+    },
+    updateFamily: (id, family) => {
+      set((state) => ({
+        families: state.families.map((f) => (f.id === id ? { ...f, ...family } : f)),
+      }));
+      saveState();
+    },
+    deleteFamily: (id) => {
+      set((state) => {
+        const updatedGuests = state.guests.map((g) =>
+          g.familyId === id ? { ...g, familyId: null } : g
+        );
+        return {
+          families: state.families.filter((f) => f.id !== id),
+          guests: updatedGuests,
+        };
+      });
+      saveState();
+    },
 
     // Guests
     addGuest: (guest) => {
@@ -121,13 +159,31 @@ const useAppStore = create<AppStore>((set, get) => {
       });
       saveState();
     },
-    assignGuestToTable: (guestId, tableId, seatNumber = null) => {
-      set((state) => ({
-        guests: state.guests.map((g) =>
+    assignGuestToTable: (guestId, tableId, seatNumber = null, skipRules = false) => {
+      const state = get();
+      
+      if (tableId && !skipRules) {
+        const check = state.checkSeatingRules(guestId, tableId);
+        if (!check.allowed) {
+          return check;
+        }
+        
+        const table = state.tables.find((t) => t.id === tableId);
+        if (table) {
+          const currentGuests = state.guests.filter((g) => g.tableId === tableId);
+          if (currentGuests.length >= table.capacity && !currentGuests.find((g) => g.id === guestId)) {
+            return { allowed: false, reason: `该桌已满（${table.capacity}人）` };
+          }
+        }
+      }
+      
+      set((s) => ({
+        guests: s.guests.map((g) =>
           g.id === guestId ? { ...g, tableId, seatNumber } : g
         ),
       }));
       saveState();
+      return { allowed: true };
     },
 
     // Seating Rules
@@ -139,6 +195,47 @@ const useAppStore = create<AppStore>((set, get) => {
     deleteSeatingRule: (id) => {
       set((state) => ({ seatingRules: state.seatingRules.filter((r) => r.id !== id) }));
       saveState();
+    },
+    checkSeatingRules: (guestId, tableId) => {
+      const state = get();
+      const guest = state.guests.find((g) => g.id === guestId);
+      if (!guest) return { allowed: true };
+      
+      const tableGuests = state.guests.filter((g) => g.tableId === tableId && g.id !== guestId);
+      const tableGuestIds = tableGuests.map((g) => g.id);
+      
+      for (const rule of state.seatingRules) {
+        const hasGuest = rule.guestIds.includes(guestId);
+        if (!hasGuest) continue;
+        
+        const otherInRule = rule.guestIds.filter((id) => id !== guestId);
+        const othersInTable = otherInRule.filter((id) => tableGuestIds.includes(id));
+        
+        if (rule.type === 'avoid' && othersInTable.length > 0) {
+          const names = othersInTable
+            .map((id) => state.guests.find((g) => g.id === id)?.name)
+            .filter(Boolean)
+            .join('、');
+          return {
+            allowed: false,
+            reason: `避桌规则：不能与 ${names} 同桌`,
+          };
+        }
+        
+        if (rule.type === 'together' && otherInRule.length > 0 && othersInTable.length !== otherInRule.length) {
+          const missing = otherInRule
+            .filter((id) => !tableGuestIds.includes(id))
+            .map((id) => state.guests.find((g) => g.id === id)?.name)
+            .filter(Boolean)
+            .join('、');
+          return {
+            allowed: false,
+            reason: `同桌规则：必须与 ${missing} 在同一桌`,
+          };
+        }
+      }
+      
+      return { allowed: true };
     },
 
     // Timeline
