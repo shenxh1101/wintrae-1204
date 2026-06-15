@@ -30,6 +30,8 @@ import {
   parseBulkImport,
   generateSignInList,
   exportToText,
+  getFamilyAggregateStatus,
+  getFamilyStatusLabel,
 } from '@/utils/helpers';
 import { Guest, GuestRelation, GuestStatus, Family } from '@/types';
 
@@ -54,6 +56,7 @@ interface DisplayRow {
   familyMembers?: Guest[];
   guest?: Guest;
   familyRelation?: GuestRelation;
+  familyAggStatus?: ReturnType<typeof getFamilyAggregateStatus>;
 }
 
 const GuestsPage = () => {
@@ -74,6 +77,7 @@ const GuestsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [relationFilter, setRelationFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [familyStatusFilter, setFamilyStatusFilter] = useState<string>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showFamilyModal, setShowFamilyModal] = useState(false);
@@ -137,6 +141,7 @@ const GuestsPage = () => {
       row.familyMembers = members;
       members.forEach((m) => processedGuestIds.add(m.id));
       row.familyRelation = members.length > 0 ? members[0].relation : row.family?.relation;
+      row.familyAggStatus = getFamilyAggregateStatus(members);
     });
 
     const ungroupedGuests = guests.filter(
@@ -172,15 +177,18 @@ const GuestsPage = () => {
       const matchStatus =
         statusFilter === 'all' ||
         members.some((m) => m.status === statusFilter);
-      
-      return matchSearch && matchRelation && matchStatus;
+      const matchFamilyStatus =
+        familyStatusFilter === 'all' ||
+        row.familyAggStatus === familyStatusFilter;
+
+      return matchSearch && matchRelation && matchStatus && matchFamilyStatus;
     });
 
     return [
       ...finalRows,
       ...filteredUngrouped.map((g) => ({ type: 'guest' as const, id: g.id, guest: g })),
     ];
-  }, [guests, families, searchTerm, relationFilter, statusFilter]);
+  }, [guests, families, searchTerm, relationFilter, statusFilter, familyStatusFilter]);
 
   const stats = useMemo(() => {
     const total = guests.length;
@@ -392,6 +400,21 @@ const GuestsPage = () => {
               ))}
             </select>
           </div>
+
+          <div className="flex items-center gap-2">
+            <Home className="w-4 h-4 text-espresso/50" />
+            <select
+              value={familyStatusFilter}
+              onChange={(e) => setFamilyStatusFilter(e.target.value)}
+              className="px-3 py-2.5 bg-rose-50 border border-rose-100 rounded-xl text-sm text-espresso focus:outline-none focus:ring-2 focus:ring-rose-200"
+            >
+              <option value="all">全部家庭状态</option>
+              <option value="all_confirmed">整户出席</option>
+              <option value="all_declined">整户缺席</option>
+              <option value="mixed">部分待定</option>
+              <option value="all_pending">整户待确认</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -500,18 +523,25 @@ const GuestsPage = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            {fStats.allConfirmed ? (
-                              <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                全部确认
-                              </span>
-                            ) : fStats.anyPending ? (
-                              <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                                部分确认
-                              </span>
-                            ) : (
-                              <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                待确认
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {(() => {
+                              const s = row.familyAggStatus || 'all_pending';
+                              const map: Record<string, { color: string; label: string }> = {
+                                all_confirmed: { color: 'bg-green-100 text-green-800 border border-green-200', label: '✓ 整户出席' },
+                                all_declined: { color: 'bg-slate-100 text-slate-600 border border-slate-200', label: '✗ 整户缺席' },
+                                mixed: { color: 'bg-amber-100 text-amber-800 border border-amber-200', label: '◐ 部分待定' },
+                                all_pending: { color: 'bg-blue-50 text-blue-700 border border-blue-200', label: '○ 整户待确认' },
+                              };
+                              const info = map[s];
+                              return (
+                                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${info.color}`}>
+                                  {info.label}
+                                </span>
+                              );
+                            })()}
+                            {fStats.peopleCount > 0 && (
+                              <span className="text-[11px] text-espresso/50">
+                                预计 {fStats.peopleCount} 人出席
                               </span>
                             )}
                           </div>

@@ -125,6 +125,46 @@ export const generateSignInList = (
   
   let content = '婚礼签到名单\n';
   content += '='.repeat(60) + '\n\n';
+
+  // ===== 家庭出席状态聚合 =====
+  content += '【家庭出席状态汇总】\n';
+  content += '-'.repeat(60) + '\n';
+  const byStatus: Record<string, Family[]> = {
+    all_confirmed: [],
+    all_declined: [],
+    mixed: [],
+    all_pending: [],
+  };
+  families.forEach((f) => {
+    const members = guests.filter((g) => g.familyId === f.id);
+    const s = getFamilyAggregateStatus(members);
+    byStatus[s].push(f);
+  });
+  const labelMap: Record<string, string> = {
+    all_confirmed: '✓ 整户出席',
+    all_declined: '✗ 整户缺席',
+    mixed: '◐ 部分待定',
+    all_pending: '○ 整户待确认',
+  };
+  (Object.keys(byStatus) as (keyof typeof byStatus)[]).forEach((k) => {
+    const list = byStatus[k];
+    const expected = list.reduce((sum, f) => {
+      const ms = guests.filter((g) => g.familyId === f.id);
+      return sum + ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + 1 + (g.plusOne || 0), 0);
+    }, 0);
+    content += `  ${labelMap[k]}：${list.length} 户 · 预计 ${expected} 人\n`;
+    if (list.length > 0 && k !== 'all_declined') {
+      list.slice(0, 5).forEach((f) => {
+        const ms = guests.filter((g) => g.familyId === f.id);
+        const count = ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + 1 + (g.plusOne || 0), 0);
+        const names = ms.map((m) => m.name).join('、');
+        content += `      · ${f.name}（${names}）${count}人\n`;
+      });
+      if (list.length > 5) content += `      · ...等共 ${list.length} 户\n`;
+    }
+    content += '\n';
+  });
+  content += '\n';
   
   const sortedTables = [...tables].sort((a, b) => a.tableNumber - b.tableNumber);
   let grandTotal = 0;
@@ -186,6 +226,220 @@ export const generateSignInList = (
   content += `总人数：${grandTotal} 人\n`;
   
   return content;
+};
+
+export interface ReconciliationTableRow {
+  tableNumber: number;
+  tableName: string;
+  capacity: number;
+  expectedGuests: number;
+  expectedPeople: number;
+  actualSignedGuests: number;
+  actualArrivedPeople: number;
+  diffPeople: number;
+  families: { name: string; expected: number; actual: number; memberNames: string }[];
+  dietaryNotes: string[];
+  unassignedArrived: number;
+}
+
+export const generateReconciliation = (
+  guests: Guest[],
+  tables: Table[],
+  families: Family[]
+): { tables: ReconciliationTableRow[]; total: ReconciliationTableRow; text: string } => {
+  const getFamily = (id: string | null) => families.find((f) => f.id === id);
+  const sortedTables = [...tables].sort((a, b) => a.tableNumber - b.tableNumber);
+
+  const rows: ReconciliationTableRow[] = [];
+  let grandExpectedGuests = 0;
+  let grandExpectedPeople = 0;
+  let grandSignedGuests = 0;
+  let grandArrivedPeople = 0;
+  const grandDietary = new Set<string>();
+
+  const unassignedArrived = guests
+    .filter((g) => !g.tableId && g.status !== 'declined' && g.signedIn)
+    .reduce(
+      (s, g) => s + (g.arrivedCount ?? 1 + (g.plusOne || 0)),
+      0
+    );
+
+  sortedTables.forEach((table) => {
+    const tableGuests = guests.filter(
+      (g) => g.tableId === table.id && g.status !== 'declined'
+    );
+    const expectedGuests = tableGuests.length;
+    const expectedPeople = tableGuests.reduce(
+      (s, g) => s + 1 + (g.plusOne || 0),
+      0
+    );
+    const signedGuests = tableGuests.filter((g) => g.signedIn);
+    const actualSignedGuests = signedGuests.length;
+    const actualArrivedPeople = signedGuests.reduce(
+      (s, g) => s + (g.arrivedCount ?? 1 + (g.plusOne || 0)),
+      0
+    );
+    const diffPeople = actualArrivedPeople - expectedPeople;
+
+    const familyGroups = new Map<string, Guest[]>();
+    tableGuests.forEach((g) => {
+      const key = g.familyId || `__single_${g.id}`;
+      if (!familyGroups.has(key)) familyGroups.set(key, []);
+      familyGroups.get(key)!.push(g);
+    });
+
+    const familiesArr: ReconciliationTableRow['families'] = [];
+    const dietarySet = new Set<string>();
+
+    familyGroups.forEach((members, key) => {
+      const fam = key.startsWith('__single_')
+        ? null
+        : getFamily(key);
+      const expected = members.reduce(
+        (s, g) => s + 1 + (g.plusOne || 0),
+        0
+      );
+      const actual = members
+        .filter((g) => g.signedIn)
+        .reduce(
+          (s, g) => s + (g.arrivedCount ?? 1 + (g.plusOne || 0)),
+          0
+        );
+      members.forEach((g) => {
+        if (g.dietary && g.dietary !== '无') {
+          dietarySet.add(g.dietary);
+          grandDietary.add(g.dietary);
+        }
+      });
+      familiesArr.push({
+        name: fam ? fam.name : members[0].name,
+        expected,
+        actual,
+        memberNames: members.map((g) => g.name).join('、'),
+      });
+    });
+
+    rows.push({
+      tableNumber: table.tableNumber,
+      tableName: table.tableName || `第${table.tableNumber}桌`,
+      capacity: table.capacity,
+      expectedGuests,
+      expectedPeople,
+      actualSignedGuests,
+      actualArrivedPeople,
+      diffPeople,
+      families: familiesArr,
+      dietaryNotes: Array.from(dietarySet),
+      unassignedArrived: 0,
+    });
+
+    grandExpectedGuests += expectedGuests;
+    grandExpectedPeople += expectedPeople;
+    grandSignedGuests += actualSignedGuests;
+    grandArrivedPeople += actualArrivedPeople;
+  });
+
+  const unassignedSignedCount = guests.filter(
+    (g) => !g.tableId && g.status !== 'declined' && g.signedIn
+  ).length;
+
+  const totalRow: ReconciliationTableRow = {
+    tableNumber: 0,
+    tableName: '合计',
+    capacity: sortedTables.reduce((s, t) => s + t.capacity, 0),
+    expectedGuests: grandExpectedGuests,
+    expectedPeople: grandExpectedPeople,
+    actualSignedGuests: grandSignedGuests + unassignedSignedCount,
+    actualArrivedPeople: grandArrivedPeople + unassignedArrived,
+    diffPeople: grandArrivedPeople + unassignedArrived - grandExpectedPeople,
+    families: [],
+    dietaryNotes: Array.from(grandDietary),
+    unassignedArrived,
+  };
+
+  let text = '婚宴对账结算单\n';
+  text += '='.repeat(70) + '\n';
+  text += `导出时间: ${new Date().toLocaleString('zh-CN')}\n\n`;
+
+  rows.forEach((r) => {
+    const diffLabel =
+      r.diffPeople > 0
+        ? `多来 +${r.diffPeople}`
+        : r.diffPeople < 0
+          ? `少来 ${r.diffPeople}`
+          : `持平 ±0`;
+    const diffColor =
+      r.diffPeople > 0 ? '▲' : r.diffPeople < 0 ? '▼' : '■';
+    text += `【第${r.tableNumber}桌】${r.tableName}  (容量${r.capacity}人)\n`;
+    text += '-'.repeat(70) + '\n';
+    text += `  预计: ${r.expectedGuests}位宾客 共${r.expectedPeople}人\n`;
+    text += `  实际: ${r.actualSignedGuests}位签到 共${r.actualArrivedPeople}人  ${diffColor} ${diffLabel}\n`;
+    text += `  明细:\n`;
+    r.families.forEach((f) => {
+      const fd =
+        f.actual > f.expected
+          ? `+${f.actual - f.expected}`
+          : f.actual < f.expected
+            ? `${f.actual - f.expected}`
+            : '±0';
+      text += `    · ${f.name}（${f.memberNames}）: 预计${f.expected} / 实际${f.actual} (${fd})\n`;
+    });
+    if (r.dietaryNotes.length > 0) {
+      text += `  忌口: ${r.dietaryNotes.join('、')}\n`;
+    }
+    text += '\n';
+  });
+
+  if (unassignedArrived > 0) {
+    text += `【未分桌临时到场】: ${unassignedArrived} 人\n\n`;
+  }
+
+  text += '='.repeat(70) + '\n';
+  text += `【总计】\n`;
+  const tdiff =
+    totalRow.diffPeople > 0
+      ? `多来 +${totalRow.diffPeople}`
+      : totalRow.diffPeople < 0
+        ? `少来 ${totalRow.diffPeople}`
+        : `持平 ±0`;
+  text += `  桌数: ${sortedTables.length} 桌  (总容量 ${totalRow.capacity} 位)\n`;
+  text += `  预计: ${totalRow.expectedGuests}位宾客 共${totalRow.expectedPeople}人\n`;
+  text += `  实际: ${totalRow.actualSignedGuests}位签到 共${totalRow.actualArrivedPeople}人  ${totalRow.diffPeople > 0 ? '▲' : totalRow.diffPeople < 0 ? '▼' : '■'} ${tdiff}\n`;
+  if (totalRow.dietaryNotes.length > 0) {
+    text += `  全场忌口汇总: ${totalRow.dietaryNotes.join('、')}\n`;
+  }
+  text += '\n' + '='.repeat(70) + '\n';
+  text += '本单据可直接用于与酒店结算桌数及确认备餐人数\n';
+
+  return { tables: rows, total: totalRow, text };
+};
+
+export type FamilyAggregateStatus =
+  | 'all_confirmed'
+  | 'all_declined'
+  | 'mixed'
+  | 'all_pending';
+
+export const getFamilyAggregateStatus = (
+  members: Pick<Guest, 'status'>[]
+): FamilyAggregateStatus => {
+  if (members.length === 0) return 'all_pending';
+  const confirmed = members.filter((m) => m.status === 'confirmed').length;
+  const declined = members.filter((m) => m.status === 'declined').length;
+  const pending = members.filter((m) => m.status === 'pending').length;
+  if (confirmed === members.length) return 'all_confirmed';
+  if (declined === members.length) return 'all_declined';
+  if (pending === members.length) return 'all_pending';
+  return 'mixed';
+};
+
+export const getFamilyStatusLabel = (s: FamilyAggregateStatus): string => {
+  return {
+    all_confirmed: '整户出席',
+    all_declined: '整户缺席',
+    mixed: '部分待定',
+    all_pending: '待确认',
+  }[s];
 };
 
 export const generateTimelineExport = (items: TimelineItem[]): string => {

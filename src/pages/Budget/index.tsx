@@ -53,6 +53,7 @@ const BudgetPage = () => {
     budgetItems,
     payments,
     inspirationImages,
+    weddingDate,
     addBudgetItem,
     updateBudgetItem,
     deleteBudgetItem,
@@ -93,6 +94,7 @@ const BudgetPage = () => {
 
   const [contractView, setContractView] = useState<'vendor' | 'timeline'>('vendor');
   const [timelineDays, setTimelineDays] = useState<7 | 14 | 30>(14);
+  const [timelineCategory, setTimelineCategory] = useState<'all' | 'payment' | 'confirm' | 'check' | 'final'>('all');
 
   const budgetStats = useMemo(() => calculateBudgetStats(budgetItems), [budgetItems]);
 
@@ -119,10 +121,11 @@ const BudgetPage = () => {
       .sort((a, b) => (a.nextPaymentDue?.dueDate || '').localeCompare(b.nextPaymentDue?.dueDate || ''));
   }, [vendorSummaries]);
 
-  const upcomingPayments = useMemo(
-    () => getUpcomingPayments(budgetItems, payments, timelineDays),
-    [budgetItems, payments, timelineDays]
-  );
+  const upcomingPayments = useMemo(() => {
+    const all = getUpcomingPayments(budgetItems, payments, timelineDays);
+    if (timelineCategory === 'all') return all;
+    return all.filter((p) => (p.payment.category || 'payment') === timelineCategory);
+  }, [budgetItems, payments, timelineDays, timelineCategory]);
 
   const paymentsByDay = useMemo(() => {
     const groups = new Map<string, UpcomingPayment[]>();
@@ -969,20 +972,43 @@ const BudgetPage = () => {
                 </div>
 
                 {contractView === 'timeline' && (
-                  <div className="flex items-center gap-1 border border-espresso/10 rounded-lg p-1">
-                    {[7, 14, 30].map((days) => (
-                      <button
-                        key={days}
-                        onClick={() => setTimelineDays(days as 7 | 14 | 30)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                          timelineDays === days
-                            ? 'bg-espresso/10 text-espresso'
-                            : 'text-espresso/50 hover:text-espresso/70'
-                        }`}
-                      >
-                        未来{days}天
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1 border border-espresso/10 rounded-lg p-1">
+                      {[7, 14, 30].map((days) => (
+                        <button
+                          key={days}
+                          onClick={() => setTimelineDays(days as 7 | 14 | 30)}
+                          className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                            timelineDays === days
+                              ? 'bg-espresso/10 text-espresso'
+                              : 'text-espresso/50 hover:text-espresso/70'
+                          }`}
+                        >
+                          未来{days}天
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 border border-espresso/10 rounded-lg p-1">
+                      {([
+                        { key: 'all', label: '全部' },
+                        { key: 'payment', label: '付款' },
+                        { key: 'confirm', label: '确认' },
+                        { key: 'check', label: '检查' },
+                        { key: 'final', label: '收尾' },
+                      ] as { key: typeof timelineCategory; label: string }[]).map((cat) => (
+                        <button
+                          key={cat.key}
+                          onClick={() => setTimelineCategory(cat.key)}
+                          className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                            timelineCategory === cat.key
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'text-espresso/50 hover:text-espresso/70'
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1102,10 +1128,42 @@ const BudgetPage = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                  {list.map((p, idx) => (
+                                  {list.map((p, idx) => {
+                                    const cat = p.payment.category || 'payment';
+                                    const catLabel: Record<string, { label: string; color: string; icon: string }> = {
+                                      payment: { label: '付款', color: 'bg-blue-100 text-blue-700', icon: '💰' },
+                                      confirm: { label: '确认', color: 'bg-purple-100 text-purple-700', icon: '📞' },
+                                      check: { label: '检查', color: 'bg-indigo-100 text-indigo-700', icon: '✅' },
+                                      final: { label: '收尾', color: 'bg-rose-100 text-rose-700', icon: '🎯' },
+                                    };
+                                    const ci = catLabel[cat] || catLabel.payment;
+                                    const ms = p.payment.milestoneStatus || (p.payment.status === 'paid' ? 'done' : 'todo');
+                                    const msLabel: Record<string, { label: string; color: string }> = {
+                                      todo: { label: '待处理', color: 'bg-slate-100 text-slate-600 hover:bg-slate-200' },
+                                      contacted: { label: '已沟通', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200' },
+                                      followup: { label: '待催办', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200' },
+                                      done: { label: '已完成', color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' },
+                                    };
+                                    const msInfo = msLabel[ms];
+                                    const nextStatus: Record<string, typeof ms> = {
+                                      todo: 'contacted',
+                                      contacted: 'followup',
+                                      followup: 'done',
+                                      done: 'todo',
+                                    };
+                                    const daysUntilWedding = (() => {
+                                      if (!weddingDate) return null;
+                                      const d1 = new Date(weddingDate + 'T00:00:00').getTime();
+                                      const d2 = new Date(p.payment.dueDate + 'T00:00:00').getTime();
+                                      const diff = Math.round((d2 - d1) / 86400000);
+                                      return diff;
+                                    })();
+                                    return (
                                     <div
                                       key={p.payment.id}
                                       className={`bg-espresso/[0.02] border rounded-xl p-3.5 transition-all hover:shadow-md ${
+                                        ms === 'done' ? 'opacity-70' : ''
+                                      } ${
                                         p.overdue
                                           ? 'border-red-200 bg-red-50/40'
                                           : p.daysUntilDue <= 3
@@ -1119,9 +1177,29 @@ const BudgetPage = () => {
                                             <h4 className="font-medium text-espresso text-sm">
                                               {p.payment.name}
                                             </h4>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${ci.color} font-semibold`}>
+                                              {ci.icon} {ci.label}
+                                            </span>
                                             <span className="text-xs bg-white/80 text-espresso/60 px-2 py-0.5 rounded-full border border-espresso/5">
                                               {p.vendor}
                                             </span>
+                                            {daysUntilWedding !== null && (
+                                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                                                Math.abs(daysUntilWedding) <= 3
+                                                  ? 'bg-red-100 text-red-700'
+                                                  : daysUntilWedding < 0
+                                                    ? 'bg-slate-100 text-slate-500'
+                                                    : daysUntilWedding === 0
+                                                      ? 'bg-rose-100 text-rose-700'
+                                                      : 'bg-champagne-50 text-champagne-700'
+                                              }`}>
+                                                {daysUntilWedding < 0
+                                                  ? `婚礼后${Math.abs(daysUntilWedding)}天`
+                                                  : daysUntilWedding === 0
+                                                    ? '💒 婚礼当天'
+                                                    : `婚礼前${daysUntilWedding}天`}
+                                              </span>
+                                            )}
                                             {p.overdue && (
                                               <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">
                                                 <AlertCircle className="w-3 h-3" />
@@ -1132,38 +1210,77 @@ const BudgetPage = () => {
                                           <p className="text-xs text-espresso/50">
                                             关联项目：{p.itemName}
                                           </p>
+                                          {p.payment.notes && (
+                                            <p className="text-xs text-espresso/60 mt-1.5 pl-2 border-l-2 border-champagne-200">
+                                              📝 {p.payment.notes}
+                                            </p>
+                                          )}
                                         </div>
-                                        <div className="text-right flex-shrink-0">
+                                        <div className="text-right flex-shrink-0 space-y-1.5">
                                           <p
                                             className={`font-bold ${
-                                              p.overdue
-                                                ? 'text-red-600'
-                                                : p.daysUntilDue <= 3
-                                                  ? 'text-amber-700'
-                                                  : 'text-espresso'
+                                              cat === 'confirm' || cat === 'check'
+                                                ? 'text-espresso/40 text-xs font-normal line-through'
+                                                : p.overdue
+                                                  ? 'text-red-600'
+                                                  : p.daysUntilDue <= 3
+                                                    ? 'text-amber-700'
+                                                    : 'text-espresso'
                                             }`}
                                           >
-                                            {formatCurrency(p.payment.amount)}
+                                            {cat === 'confirm' || cat === 'check'
+                                              ? '（沟通类）'
+                                              : formatCurrency(p.payment.amount)}
                                           </p>
-                                          <button
-                                            onClick={() =>
-                                              togglePaymentStatus(p.payment.id)
-                                            }
-                                            className={`mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-full transition-colors ${
-                                              p.overdue
-                                                ? 'bg-red-500 hover:bg-red-600 text-white'
-                                                : p.daysUntilDue <= 3
-                                                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                                                  : 'bg-gradient-to-r from-green-400 to-emerald-500 hover:shadow-md text-white'
-                                            }`}
-                                          >
-                                            <CheckCircle className="w-3 h-3" />
-                                            标记已付
-                                          </button>
+                                          <div className="flex items-center gap-1 justify-end flex-wrap">
+                                            <button
+                                              onClick={() => {
+                                                const next = nextStatus[ms];
+                                                const patch: Partial<Payment> = {
+                                                  milestoneStatus: next,
+                                                };
+                                                if (
+                                                  (cat === 'payment' || cat === 'final') &&
+                                                  next === 'done' &&
+                                                  p.payment.status !== 'paid'
+                                                ) {
+                                                  patch.status = 'paid';
+                                                } else if (
+                                                  (cat === 'payment' || cat === 'final') &&
+                                                  next === 'todo' &&
+                                                  p.payment.status === 'paid'
+                                                ) {
+                                                  patch.status = 'pending';
+                                                }
+                                                updatePayment(p.payment.id, patch);
+                                              }}
+                                              className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-full transition-colors ${msInfo.color}`}
+                                            >
+                                              {msInfo.label}
+                                            </button>
+                                            {cat !== 'confirm' && cat !== 'check' && (
+                                              <button
+                                                onClick={() =>
+                                                  togglePaymentStatus(p.payment.id)
+                                                }
+                                                className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-full transition-colors ${
+                                                  p.overdue
+                                                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                                                    : p.daysUntilDue <= 3
+                                                      ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                                      : 'bg-gradient-to-r from-green-400 to-emerald-500 hover:shadow-md text-white'
+                                                }`}
+                                              >
+                                                <CheckCircle className="w-3 h-3" />
+                                                {p.payment.status === 'paid' ? '已付' : '标记已付'}
+                                              </button>
+                                            )}
+                                          </div>
                                         </div>
                                       </div>
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </div>

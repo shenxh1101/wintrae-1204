@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage, Family } from '@/types';
+import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage, Family, PaymentCategory, MilestoneStatus } from '@/types';
 import { loadFromStorage, saveToStorage, resetToMockData, generateId } from '@/utils';
 
 interface SeatingCheckResult {
@@ -434,8 +434,11 @@ const useAppStore = create<AppStore>((set, get) => {
 
     // Payments
     addPayment: (payment) => {
-      const newPayment = { ...payment, id: generateId() };
-      set((state) => ({ payments: [...state.payments, newPayment] }));
+      const pc: PaymentCategory = 'payment';
+      const ms: MilestoneStatus = payment.status === 'paid' ? 'done' : 'todo';
+      const merged = Object.assign({}, { category: pc, milestoneStatus: ms }, payment);
+      const newPayment: Payment = Object.assign({}, merged, { id: generateId() });
+      set((state) => ({ payments: state.payments.concat([newPayment]) }));
       saveState();
     },
     updatePayment: (id, payment) => {

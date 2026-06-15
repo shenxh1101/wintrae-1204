@@ -75,6 +75,9 @@ export interface BudgetItem {
 
 export type PaymentStatus = 'pending' | 'paid';
 
+export type PaymentCategory = 'payment' | 'confirm' | 'check' | 'final';
+export type MilestoneStatus = 'todo' | 'contacted' | 'followup' | 'done';
+
 export interface Payment {
   id: string;
   budgetItemId: string;
@@ -82,6 +85,9 @@ export interface Payment {
   amount: number;
   dueDate: string;
   status: PaymentStatus;
+  category?: PaymentCategory;
+  milestoneStatus?: MilestoneStatus;
+  notes?: string;
 }
 
 export interface InspirationImage {

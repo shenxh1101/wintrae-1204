@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import useAppStore from '@/store/useAppStore';
 import Button from '@/components/Button';
-import { generateSignInList, getRelationLabel, formatCurrency } from '@/utils/helpers';
+import { generateSignInList, generateReconciliation, getRelationLabel, formatCurrency } from '@/utils/helpers';
 
 type ViewMode = 'byTable' | 'byFamily';
 type FilterRelation = 'all' | 'groom' | 'bride' | 'colleague' | 'friend' | 'other';
@@ -83,6 +83,7 @@ const SignInPage = () => {
       signedCount: signedGuests.length,
       familiesSigned,
       totalArrived,
+      diffPeople: totalArrived - totalExpected,
       signedWithTable,
       signedWithoutTable,
       tableSignedCount,
@@ -121,6 +122,17 @@ const SignInPage = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = `签到名单_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportReconciliation = () => {
+    const { text } = generateReconciliation(guests, tables, families);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `婚宴对账结算单_${new Date().toISOString().slice(0, 10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -287,6 +299,20 @@ const SignInPage = () => {
                         全部签到
                       </span>
                     )}
+                    {arrivedThis !== totalExpectedThis &&
+                      tableGuests.some((g) => g.signedIn) && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+                            arrivedThis > totalExpectedThis
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {arrivedThis > totalExpectedThis
+                            ? `多来 +${arrivedThis - totalExpectedThis}`
+                            : `少来 ${arrivedThis - totalExpectedThis}`}
+                        </span>
+                      )}
                   </div>
                   <p className="text-xs text-espresso/50 mt-0.5">
                     {signedInThis.length}/{tableGuests.length} 位宾客 · 到场 {arrivedThis}/{totalExpectedThis} 人
@@ -584,10 +610,14 @@ const SignInPage = () => {
             按桌或按家庭签到，实时查看到场统计，和导出名单完全一致
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" onClick={handleExport}>
             <Download className="w-4 h-4" />
             导出签到名单
+          </Button>
+          <Button variant="primary" onClick={handleExportReconciliation}>
+            <ClipboardList className="w-4 h-4" />
+            导出婚宴对账单
           </Button>
         </div>
       </div>
@@ -619,11 +649,56 @@ const SignInPage = () => {
                 {stats.totalArrived}
               </p>
               <p className="text-xs text-espresso/50 mt-1">
-                {stats.signedCount} 位宾客已签到
+                {stats.signedCount} 位签到 + 携伴
               </p>
             </div>
             <div className="w-12 h-12 bg-white/70 rounded-xl flex items-center justify-center">
               <CheckCircle2 className="w-6 h-6 text-green-600" />
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-2xl p-5 shadow-soft ${
+            stats.diffPeople > 0
+              ? 'bg-gradient-to-br from-rose-50 to-rose-100'
+              : stats.diffPeople < 0
+                ? 'bg-gradient-to-br from-amber-50 to-amber-100'
+                : 'bg-gradient-to-br from-slate-50 to-slate-100'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-espresso/60">现场增减</p>
+              <p
+                className={`mt-2 text-3xl font-bold font-serif ${
+                  stats.diffPeople > 0
+                    ? 'text-rose-600'
+                    : stats.diffPeople < 0
+                      ? 'text-amber-700'
+                      : 'text-slate-500'
+                }`}
+              >
+                {stats.diffPeople > 0
+                  ? `+${stats.diffPeople}`
+                  : stats.diffPeople}
+              </p>
+              <p className="text-xs text-espresso/50 mt-1">
+                {stats.diffPeople > 0
+                  ? `多来 ${stats.diffPeople} 人`
+                  : stats.diffPeople < 0
+                    ? `少来 ${Math.abs(stats.diffPeople)} 人`
+                    : '与预计持平'}
+              </p>
+            </div>
+            <div className="w-12 h-12 bg-white/70 rounded-xl flex items-center justify-center">
+              {stats.diffPeople > 0 ? (
+                <Plus className="w-6 h-6 text-rose-500" />
+              ) : stats.diffPeople < 0 ? (
+                <Minus className="w-6 h-6 text-amber-600" />
+              ) : (
+                <CheckCircle2 className="w-6 h-6 text-slate-500" />
+              )}
             </div>
           </div>
         </div>
