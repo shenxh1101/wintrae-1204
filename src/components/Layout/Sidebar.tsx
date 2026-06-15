@@ -6,6 +6,7 @@ import {
   Clock,
   Wallet,
   Heart,
+  ClipboardCheck,
 } from 'lucide-react';
 import useAppStore from '@/store/useAppStore';
 
@@ -13,6 +14,7 @@ const navItems = [
   { path: '/', icon: LayoutDashboard, label: '仪表盘' },
   { path: '/guests', icon: Users, label: '宾客名单' },
   { path: '/seating', icon: TableIcon, label: '席位安排' },
+  { path: '/signin', icon: ClipboardCheck, label: '现场签到' },
   { path: '/timeline', icon: Clock, label: '流程单' },
   { path: '/budget', icon: Wallet, label: '预算' },
 ];

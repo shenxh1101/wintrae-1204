@@ -22,6 +22,9 @@ export interface Guest {
   tableId: string | null;
   seatNumber: number | null;
   notes: string;
+  signedIn: boolean;
+  signedInAt: string | null;
+  arrivedCount: number | null;
 }
 
 export interface Table {

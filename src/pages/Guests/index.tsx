@@ -17,6 +17,8 @@ import {
   UsersRound,
   UserPlus2,
   Home,
+  Users2,
+  CheckSquare,
 } from 'lucide-react';
 import useAppStore from '@/store/useAppStore';
 import Button from '@/components/Button';
@@ -65,6 +67,8 @@ const GuestsPage = () => {
     bulkAddGuests,
     addFamily,
     updateFamily,
+    updateFamilyRelation,
+    updateFamilyStatus,
   } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -538,6 +542,62 @@ const GuestsPage = () => {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-1 mr-1">
+                              <div className="relative group/fam-relation">
+                                <button
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 text-espresso/60 hover:text-blue-600 text-xs transition-colors border border-transparent hover:border-blue-100"
+                                  title="整户改关系分组（席位/签到/统计同步更新）"
+                                >
+                                  <Users2 className="w-3.5 h-3.5" />
+                                  改关系
+                                  <ChevronDown className="w-3 h-3 -mr-0.5" />
+                                </button>
+                                <div className="absolute right-0 top-full mt-1 z-30 opacity-0 invisible group-hover/fam-relation:opacity-100 group-hover/fam-relation:visible transition-all bg-white shadow-lg rounded-xl border border-rose-100 p-1.5 min-w-[130px]">
+                                  {relations.map((r) => (
+                                    <button
+                                      key={r.value}
+                                      onClick={() => {
+                                        if (confirm(`确定把整户「${family.name}」的关系全部改为「${r.label}」吗？席位安排、签到名单和统计数据都会同步更新。`)) {
+                                          updateFamilyRelation(family.id, r.value);
+                                        }
+                                      }}
+                                      className={`w-full text-left px-3 py-1.5 text-xs rounded-lg hover:bg-blue-50 transition-colors ${
+                                        family.relation === r.value
+                                          ? 'bg-blue-50 text-blue-700 font-medium'
+                                          : 'text-espresso/70'
+                                      }`}
+                                    >
+                                      {r.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="relative group/fam-status">
+                                <button
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 text-espresso/60 hover:text-emerald-600 text-xs transition-colors border border-transparent hover:border-emerald-100"
+                                  title="整户改出席状态（席位/签到/统计同步更新）"
+                                >
+                                  <CheckSquare className="w-3.5 h-3.5" />
+                                  改状态
+                                  <ChevronDown className="w-3 h-3 -mr-0.5" />
+                                </button>
+                                <div className="absolute right-0 top-full mt-1 z-30 opacity-0 invisible group-hover/fam-status:opacity-100 group-hover/fam-status:visible transition-all bg-white shadow-lg rounded-xl border border-rose-100 p-1.5 min-w-[130px]">
+                                  {statuses.map((s) => (
+                                    <button
+                                      key={s.value}
+                                      onClick={() => {
+                                        if (confirm(`确定把整户「${family.name}」全部标记为「${s.label}」吗？席位安排、签到名单和统计数据都会同步更新。`)) {
+                                          updateFamilyStatus(family.id, s.value);
+                                        }
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs rounded-lg hover:bg-emerald-50 transition-colors text-espresso/70"
+                                    >
+                                      {s.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
                             <button
                               onClick={() => handleOpenAdd(family.id)}
                               className="p-2 rounded-lg hover:bg-green-50 text-espresso/60 hover:text-green-600 transition-colors"

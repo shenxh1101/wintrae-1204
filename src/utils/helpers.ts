@@ -262,7 +262,7 @@ export const summarizeByVendor = (
   const vendorMap = new Map<string, VendorSummary>();
   
   items.forEach(item => {
-    const vendor = item.vendor || '未指定供应商';
+    const vendor = item.vendor?.trim() || '未指定供应商';
     if (!vendorMap.has(vendor)) {
       vendorMap.set(vendor, {
         vendor,
@@ -315,5 +315,65 @@ export const summarizeByVendor = (
     }
   });
   
-  return Array.from(vendorMap.values());
+  return Array.from(vendorMap.values()).sort((a, b) => {
+    const ad = a.nextPaymentDue?.dueDate || '9999-12-31';
+    const bd = b.nextPaymentDue?.dueDate || '9999-12-31';
+    return ad.localeCompare(bd);
+  });
+};
+
+export interface UpcomingPayment {
+  payment: Payment;
+  vendor: string;
+  itemName: string;
+  daysUntilDue: number;
+  overdue: boolean;
+  dueLabel: string;
+}
+
+export const getUpcomingPayments = (
+  items: BudgetItem[],
+  payments: Payment[],
+  daysAhead: number = 14,
+  todayStr?: string
+): UpcomingPayment[] => {
+  const today = todayStr
+    ? new Date(todayStr + 'T00:00:00')
+    : new Date();
+  today.setHours(0, 0, 0, 0);
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + daysAhead);
+
+  const result: UpcomingPayment[] = [];
+
+  payments
+    .filter((p) => p.status === 'pending' && p.dueDate)
+    .forEach((p) => {
+      const due = new Date(p.dueDate + 'T00:00:00');
+      due.setHours(0, 0, 0, 0);
+      const diffMs = due.getTime() - today.getTime();
+      const daysUntilDue = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+      if (due <= endDate) {
+        const item = items.find((i) => i.id === p.budgetItemId);
+        const overdue = daysUntilDue < 0;
+        let dueLabel = '';
+        if (overdue) dueLabel = `已逾期 ${Math.abs(daysUntilDue)} 天`;
+        else if (daysUntilDue === 0) dueLabel = '今天到期';
+        else if (daysUntilDue <= 3) dueLabel = `${daysUntilDue} 天后（紧急）`;
+        else if (daysUntilDue <= 7) dueLabel = `${daysUntilDue} 天后`;
+        else dueLabel = `${daysUntilDue} 天后`;
+
+        result.push({
+          payment: p,
+          vendor: item?.vendor?.trim() || '未指定供应商',
+          itemName: item?.name || '',
+          daysUntilDue,
+          overdue,
+          dueLabel,
+        });
+      }
+    });
+
+  return result.sort((a, b) => a.daysUntilDue - b.daysUntilDue);
 };

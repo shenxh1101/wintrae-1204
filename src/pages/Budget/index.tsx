@@ -34,6 +34,8 @@ import {
   getPaymentStatusColor,
   summarizeByVendor,
   VendorSummary,
+  getUpcomingPayments,
+  UpcomingPayment,
 } from '@/utils/helpers';
 
 const iconMap: Record<string, any> = {
@@ -89,6 +91,9 @@ const BudgetPage = () => {
     status: 'pending' as 'pending' | 'paid',
   });
 
+  const [contractView, setContractView] = useState<'vendor' | 'timeline'>('vendor');
+  const [timelineDays, setTimelineDays] = useState<7 | 14 | 30>(14);
+
   const budgetStats = useMemo(() => calculateBudgetStats(budgetItems), [budgetItems]);
 
   const categoryStats = useMemo(() => {
@@ -113,6 +118,21 @@ const BudgetPage = () => {
       .filter((v) => v.nextPaymentDue && v.nextPaymentDue.dueDate <= today)
       .sort((a, b) => (a.nextPaymentDue?.dueDate || '').localeCompare(b.nextPaymentDue?.dueDate || ''));
   }, [vendorSummaries]);
+
+  const upcomingPayments = useMemo(
+    () => getUpcomingPayments(budgetItems, payments, timelineDays),
+    [budgetItems, payments, timelineDays]
+  );
+
+  const paymentsByDay = useMemo(() => {
+    const groups = new Map<string, UpcomingPayment[]>();
+    upcomingPayments.forEach((p) => {
+      const key = p.payment.dueDate || 'unknown';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    });
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [upcomingPayments]);
 
   const handleOpenAddItem = (categoryId?: string) => {
     setEditingItem(null);
@@ -913,17 +933,248 @@ const BudgetPage = () => {
           )}
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-serif text-xl font-semibold text-espresso">
-                供应商合同一览
-              </h2>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h2 className="font-serif text-xl font-semibold text-espresso">
+                  供应商合同一览
+                </h2>
+                <div className="flex items-center gap-1 bg-espresso/5 rounded-lg p-1">
+                  <button
+                    onClick={() => setContractView('vendor')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      contractView === 'vendor'
+                        ? 'bg-white text-espresso shadow-sm'
+                        : 'text-espresso/60 hover:text-espresso'
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5 inline mr-1" />
+                    按供应商
+                  </button>
+                  <button
+                    onClick={() => setContractView('timeline')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${
+                      contractView === 'timeline'
+                        ? 'bg-white text-espresso shadow-sm'
+                        : 'text-espresso/60 hover:text-espresso'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    到期时间线
+                    {upcomingPayments.length > 0 && (
+                      <span className="ml-0.5 inline-flex items-center justify-center w-4 h-4 text-[10px] bg-red-500 text-white rounded-full">
+                        {upcomingPayments.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {contractView === 'timeline' && (
+                  <div className="flex items-center gap-1 border border-espresso/10 rounded-lg p-1">
+                    {[7, 14, 30].map((days) => (
+                      <button
+                        key={days}
+                        onClick={() => setTimelineDays(days as 7 | 14 | 30)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                          timelineDays === days
+                            ? 'bg-espresso/10 text-espresso'
+                            : 'text-espresso/50 hover:text-espresso/70'
+                        }`}
+                      >
+                        未来{days}天
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <Button onClick={() => handleOpenAddItem()}>
                 <Plus className="w-4 h-4" />
                 添加预算项
               </Button>
             </div>
 
-            {vendorSummaries.length === 0 ? (
+            {contractView === 'timeline' ? (
+              <div className="bg-white rounded-2xl p-6 shadow-soft">
+                {upcomingPayments.length === 0 ? (
+                  <div className="py-16 text-center">
+                    <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center">
+                      <CheckCircle className="w-10 h-10 text-green-500" />
+                    </div>
+                    <h3 className="font-serif text-lg font-semibold text-espresso mb-2">
+                      未来{timelineDays}天没有待付款项
+                    </h3>
+                    <p className="text-espresso/50 text-sm">
+                      所有合同节点都已安排妥当，祝婚礼顺利 💕
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-6 pb-4 border-b border-espresso/5">
+                      <div>
+                        <p className="text-xs text-espresso/50 mb-1">
+                          未来{timelineDays}天
+                        </p>
+                        <p className="text-sm text-espresso/80">
+                          共 <span className="font-bold text-espresso">{upcomingPayments.length}</span> 笔待付款，
+                          合计 <span className="font-bold text-rose-600">
+                            {formatCurrency(upcomingPayments.reduce((s, p) => s + p.payment.amount, 0))}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                          <span className="text-espresso/60">逾期</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                          <span className="text-espresso/60">3天内</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-champagne-400" />
+                          <span className="text-espresso/60">7天内</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-green-400" />
+                          <span className="text-espresso/60">稍后</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="relative">
+                      {/* Vertical line */}
+                      <div className="absolute left-6 top-2 bottom-2 w-0.5 bg-gradient-to-b from-red-300 via-amber-300 to-green-300 rounded-full" />
+
+                      <div className="space-y-5">
+                        {paymentsByDay.map(([day, list], dayIdx) => {
+                          const overdueCount = list.filter((p) => p.overdue).length;
+                          const urgentCount = list.filter(
+                            (p) => !p.overdue && p.daysUntilDue <= 3
+                          ).length;
+                          const sum = list.reduce((s, p) => s + p.payment.amount, 0);
+                          const firstItem = list[0];
+
+                          let dotColor = 'bg-green-400';
+                          if (overdueCount > 0) dotColor = 'bg-red-500';
+                          else if (urgentCount > 0) dotColor = 'bg-amber-500';
+                          else if (firstItem.daysUntilDue <= 7)
+                            dotColor = 'bg-champagne-400';
+
+                          const dayLabel = list[0].dueLabel;
+
+                          return (
+                            <div key={day} className="relative pl-16">
+                              {/* Date bubble */}
+                              <div className={`absolute left-0 w-12 h-12 rounded-full ${dotColor} text-white flex flex-col items-center justify-center text-xs font-bold shadow-md z-10 ring-4 ring-white`}>
+                                <span className="text-[10px] leading-none">
+                                  {new Date(day + 'T00:00:00').getMonth() + 1}月
+                                </span>
+                                <span className="leading-none">
+                                  {new Date(day + 'T00:00:00').getDate()}
+                                </span>
+                              </div>
+
+                              <div className="pt-1">
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                  <span
+                                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                                      overdueCount > 0
+                                        ? 'bg-red-100 text-red-700'
+                                        : urgentCount > 0
+                                          ? 'bg-amber-100 text-amber-700'
+                                          : firstItem.daysUntilDue <= 7
+                                            ? 'bg-champagne-100 text-champagne-700'
+                                            : 'bg-green-100 text-green-700'
+                                    }`}
+                                  >
+                                    {dayLabel}
+                                  </span>
+                                  <span className="text-xs text-espresso/50">
+                                    {list.length} 笔 · 合计
+                                    <span
+                                      className={`ml-1 font-bold ${
+                                        overdueCount > 0 ? 'text-red-600' : 'text-espresso'
+                                      }`}
+                                    >
+                                      {formatCurrency(sum)}
+                                    </span>
+                                  </span>
+                                </div>
+
+                                <div className="space-y-2">
+                                  {list.map((p, idx) => (
+                                    <div
+                                      key={p.payment.id}
+                                      className={`bg-espresso/[0.02] border rounded-xl p-3.5 transition-all hover:shadow-md ${
+                                        p.overdue
+                                          ? 'border-red-200 bg-red-50/40'
+                                          : p.daysUntilDue <= 3
+                                            ? 'border-amber-200 bg-amber-50/40'
+                                            : 'border-espresso/5 hover:border-champagne-200'
+                                      }`}
+                                    >
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                            <h4 className="font-medium text-espresso text-sm">
+                                              {p.payment.name}
+                                            </h4>
+                                            <span className="text-xs bg-white/80 text-espresso/60 px-2 py-0.5 rounded-full border border-espresso/5">
+                                              {p.vendor}
+                                            </span>
+                                            {p.overdue && (
+                                              <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">
+                                                <AlertCircle className="w-3 h-3" />
+                                                请优先处理
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-xs text-espresso/50">
+                                            关联项目：{p.itemName}
+                                          </p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0">
+                                          <p
+                                            className={`font-bold ${
+                                              p.overdue
+                                                ? 'text-red-600'
+                                                : p.daysUntilDue <= 3
+                                                  ? 'text-amber-700'
+                                                  : 'text-espresso'
+                                            }`}
+                                          >
+                                            {formatCurrency(p.payment.amount)}
+                                          </p>
+                                          <button
+                                            onClick={() =>
+                                              togglePaymentStatus(p.payment.id)
+                                            }
+                                            className={`mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-full transition-colors ${
+                                              p.overdue
+                                                ? 'bg-red-500 hover:bg-red-600 text-white'
+                                                : p.daysUntilDue <= 3
+                                                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                                  : 'bg-gradient-to-r from-green-400 to-emerald-500 hover:shadow-md text-white'
+                                            }`}
+                                          >
+                                            <CheckCircle className="w-3 h-3" />
+                                            标记已付
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : vendorSummaries.length === 0 ? (
               <div className="bg-white rounded-2xl p-16 text-center shadow-soft">
                 <Building2 className="w-16 h-16 text-espresso/20 mx-auto mb-4" />
                 <p className="text-espresso/50 mb-4">还没有供应商数据</p>

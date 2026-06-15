@@ -18,6 +18,14 @@ interface AppStore extends AppState {
   updateGuest: (id: string, guest: Partial<Guest>) => void;
   deleteGuest: (id: string) => void;
   bulkAddGuests: (guests: Partial<Guest>[]) => void;
+  signInGuest: (guestId: string, arrivedCount?: number) => void;
+  signOutGuest: (guestId: string) => void;
+  signInFamily: (familyId: string, arrivedCounts?: Record<string, number>) => void;
+  signOutFamily: (familyId: string) => void;
+
+  // Families batch
+  updateFamilyRelation: (familyId: string, relation: Guest['relation']) => void;
+  updateFamilyStatus: (familyId: string, status: Guest['status']) => void;
   
   // Tables
   addTable: (table: Omit<Table, 'id'>) => void;
@@ -102,7 +110,13 @@ const useAppStore = create<AppStore>((set, get) => {
 
     // Guests
     addGuest: (guest) => {
-      const newGuest = { ...guest, id: generateId() };
+      const newGuest = {
+        ...guest,
+        id: generateId(),
+        signedIn: guest.signedIn ?? false,
+        signedInAt: guest.signedInAt ?? null,
+        arrivedCount: guest.arrivedCount ?? null,
+      };
       set((state) => ({ guests: [...state.guests, newGuest] }));
       saveState();
     },
@@ -130,8 +144,67 @@ const useAppStore = create<AppStore>((set, get) => {
         tableId: null,
         seatNumber: null,
         notes: g.notes || '',
+        signedIn: false,
+        signedInAt: null,
+        arrivedCount: null,
       }));
       set((state) => ({ guests: [...state.guests, ...newGuests] }));
+      saveState();
+    },
+    signInGuest: (guestId, arrivedCount) => {
+      const state = get();
+      const guest = state.guests.find((g) => g.id === guestId);
+      if (!guest) return;
+      const defaultCount = 1 + (guest.plusOne || 0);
+      set({
+        guests: state.guests.map((g) =>
+          g.id === guestId
+            ? {
+                ...g,
+                signedIn: true,
+                signedInAt: new Date().toISOString(),
+                arrivedCount: arrivedCount ?? defaultCount,
+              }
+            : g
+        ),
+      });
+      saveState();
+    },
+    signOutGuest: (guestId) => {
+      set((state) => ({
+        guests: state.guests.map((g) =>
+          g.id === guestId
+            ? { ...g, signedIn: false, signedInAt: null, arrivedCount: null }
+            : g
+        ),
+      }));
+      saveState();
+    },
+    signInFamily: (familyId, arrivedCounts) => {
+      const state = get();
+      const now = new Date().toISOString();
+      set({
+        guests: state.guests.map((g) => {
+          if (g.familyId !== familyId) return g;
+          const defaultCount = 1 + (g.plusOne || 0);
+          return {
+            ...g,
+            signedIn: true,
+            signedInAt: now,
+            arrivedCount: arrivedCounts?.[g.id] ?? defaultCount,
+          };
+        }),
+      });
+      saveState();
+    },
+    signOutFamily: (familyId) => {
+      set((state) => ({
+        guests: state.guests.map((g) =>
+          g.familyId === familyId
+            ? { ...g, signedIn: false, signedInAt: null, arrivedCount: null }
+            : g
+        ),
+      }));
       saveState();
     },
 
@@ -167,11 +240,60 @@ const useAppStore = create<AppStore>((set, get) => {
         if (!check.allowed) {
           return check;
         }
-        
+
         const table = state.tables.find((t) => t.id === tableId);
         if (table) {
           const currentGuests = state.guests.filter((g) => g.tableId === tableId);
-          if (currentGuests.length >= table.capacity && !currentGuests.find((g) => g.id === guestId)) {
+          const currentCount = currentGuests.find((g) => g.id === guestId)
+            ? currentGuests.length
+            : currentGuests.length + 1;
+
+          // 检查 together 组的总人数是否放得下（包括本组已在这桌 + 尚未入这桌的 + 当前入的）
+          const togetherGroups = state.seatingRules.filter(
+            (r) => r.type === 'together' && r.guestIds.includes(guestId)
+          );
+          for (const rule of togetherGroups) {
+            const groupMembers = rule.guestIds
+              .map((id) => state.guests.find((g) => g.id === id))
+              .filter((g): g is Guest => !!g && g.status !== 'declined');
+            const membersInOtherTables = groupMembers.filter(
+              (g) => g.tableId && g.tableId !== tableId && g.id !== guestId
+            );
+
+            if (membersInOtherTables.length > 0) {
+              const names = membersInOtherTables.map((g) => g.name).join('、');
+              return {
+                allowed: false,
+                reason: `同桌规则冲突：${names} 已在其他桌，建议一起调整`,
+              };
+            }
+
+            const groupTotal = groupMembers.length;
+            if (groupTotal > table.capacity) {
+              return {
+                allowed: false,
+                reason: `本组 ${groupTotal} 人超过该桌 ${table.capacity} 人容量，建议换大桌或拆分规则`,
+              };
+            }
+
+            // 整组未来都会坐到这桌，提前检查容量
+            const existingInThisTable = groupMembers.filter(
+              (g) => g.tableId === tableId || g.id === guestId
+            ).length;
+            const comingLater = groupTotal - existingInThisTable;
+            if (currentCount + comingLater > table.capacity) {
+              const membersNotYet = groupMembers.filter(
+                (g) => g.tableId !== tableId && g.id !== guestId
+              );
+              const names = membersNotYet.map((g) => g.name).join('、');
+              return {
+                allowed: false,
+                reason: `放完整组还差 ${names} 共 ${comingLater} 人，超出该桌容量，建议换桌或一起调整`,
+              };
+            }
+          }
+
+          if (currentCount > table.capacity) {
             return { allowed: false, reason: `该桌已满（${table.capacity}人）` };
           }
         }
@@ -221,21 +343,51 @@ const useAppStore = create<AppStore>((set, get) => {
             reason: `避桌规则：不能与 ${names} 同桌`,
           };
         }
-        
-        if (rule.type === 'together' && otherInRule.length > 0 && othersInTable.length !== otherInRule.length) {
-          const missing = otherInRule
-            .filter((id) => !tableGuestIds.includes(id))
-            .map((id) => state.guests.find((g) => g.id === id)?.name)
-            .filter(Boolean)
-            .join('、');
-          return {
-            allowed: false,
-            reason: `同桌规则：必须与 ${missing} 在同一桌`,
-          };
+
+        if (rule.type === 'together') {
+          // 检查同组的人是否分散在别的桌上了（不允许跨桌）
+          const membersInOtherTables = otherInRule
+            .map((id) => state.guests.find((g) => g.id === id))
+            .filter((g): g is Guest => {
+              if (!g) return false;
+              if (!g.tableId) return false;
+              return g.tableId !== tableId;
+            });
+
+          if (membersInOtherTables.length > 0) {
+            const names = membersInOtherTables.map((g) => g.name).join('、');
+            return {
+              allowed: false,
+              reason: `同桌规则：${names} 已在其他桌，需要一起调整`,
+            };
+          }
         }
       }
       
       return { allowed: true };
+    },
+
+    // Family batch operations
+    updateFamilyRelation: (familyId, relation) => {
+      const state = get();
+      set({
+        guests: state.guests.map((g) =>
+          g.familyId === familyId ? { ...g, relation } : g
+        ),
+        families: state.families.map((f) =>
+          f.id === familyId ? { ...f, relation } : f
+        ),
+      });
+      saveState();
+    },
+    updateFamilyStatus: (familyId, status) => {
+      const state = get();
+      set({
+        guests: state.guests.map((g) =>
+          g.familyId === familyId ? { ...g, status } : g
+        ),
+      });
+      saveState();
     },
 
     // Timeline
