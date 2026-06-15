@@ -7,7 +7,12 @@ export const loadFromStorage = (): AppState => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      return {
+        ...mockData,
+        ...parsed,
+        giftRecords: parsed.giftRecords || mockData.giftRecords || [],
+      };
     }
   } catch (e) {
     console.error('Failed to load from storage:', e);

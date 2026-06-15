@@ -97,31 +97,13 @@ const SignInPage = () => {
 
   const handleExport = () => {
     const content = generateSignInList(guests, tables, families);
-    const header = '签到名单 - 现场导出\n';
-    const headerInfo =
-      `导出时间: ${new Date().toLocaleString('zh-CN')}\n` +
-      `实际总到场: ${stats.totalArrived} 人  (签到 ${stats.signedCount} 位宾客 + 携伴)\n\n`;
-    const signStatusInfo = guests
-      .filter((g) => g.signedIn)
-      .map((g) => {
-        const arrived = g.arrivedCount ?? 1 + (g.plusOne || 0);
-        return `✓ ${g.name} - 到场${arrived}人 ${g.signedInAt ? `(${new Date(g.signedInAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })})` : ''}`;
-      })
-      .join('\n');
-    const finalContent =
-      header +
-      headerInfo +
-      '--- 现场签到记录 ---\n' +
-      (signStatusInfo || '暂无签到记录') +
-      '\n\n--- 预计席位名单 (与席位安排一致) ---\n' +
-      content;
-    const blob = new Blob([finalContent], {
+    const blob = new Blob([content], {
       type: 'text/plain;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `签到名单_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `签到名单_现场版_${new Date().toISOString().slice(0, 10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };

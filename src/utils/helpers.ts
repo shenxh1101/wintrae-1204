@@ -122,13 +122,28 @@ export const generateSignInList = (
   families: Family[]
 ): string => {
   const getFamily = (id: string | null) => families.find(f => f.id === id);
-  
-  let content = '婚礼签到名单\n';
-  content += '='.repeat(60) + '\n\n';
+  const activeGuests = guests.filter(g => g.status !== 'declined');
+  const getActual = (g: Guest) => g.signedIn ? (g.arrivedCount ?? 1 + (g.plusOne || 0)) : 0;
+  const getExpected = (g: Guest) => 1 + (g.plusOne || 0);
+
+  let content = '婚礼签到名单（现场实时版）\n';
+  content += '='.repeat(70) + '\n';
+  content += `导出时间: ${new Date().toLocaleString('zh-CN')}\n`;
+
+  const totalExpected = activeGuests.reduce((s, g) => s + getExpected(g), 0);
+  const totalArrived = activeGuests.filter(g => g.signedIn).reduce((s, g) => s + getActual(g), 0);
+  const totalSigned = activeGuests.filter(g => g.signedIn).length;
+  const diff = totalArrived - totalExpected;
+
+  content += `\n【汇总统计】（与页面顶部统计完全一致）\n`;
+  content += '-'.repeat(70) + '\n';
+  content += `  预计总人数: ${totalExpected} 人\n`;
+  content += `  实际总到场: ${totalArrived} 人（${totalSigned} 位签到宾客 + 携伴/临时增减）\n`;
+  content += `  差额: ${diff > 0 ? `多来 +${diff}` : diff < 0 ? `少来 ${diff}` : '持平 ±0'} 人\n\n`;
 
   // ===== 家庭出席状态聚合 =====
   content += '【家庭出席状态汇总】\n';
-  content += '-'.repeat(60) + '\n';
+  content += '-'.repeat(70) + '\n';
   const byStatus: Record<string, Family[]> = {
     all_confirmed: [],
     all_declined: [],
@@ -150,15 +165,20 @@ export const generateSignInList = (
     const list = byStatus[k];
     const expected = list.reduce((sum, f) => {
       const ms = guests.filter((g) => g.familyId === f.id);
-      return sum + ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + 1 + (g.plusOne || 0), 0);
+      return sum + ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + getExpected(g), 0);
     }, 0);
-    content += `  ${labelMap[k]}：${list.length} 户 · 预计 ${expected} 人\n`;
+    const actual = list.reduce((sum, f) => {
+      const ms = guests.filter((g) => g.familyId === f.id);
+      return sum + ms.filter((m) => m.status !== 'declined' && m.signedIn).reduce((s, g) => s + getActual(g), 0);
+    }, 0);
+    content += `  ${labelMap[k]}：${list.length} 户 · 预计 ${expected} / 实到 ${actual} 人\n`;
     if (list.length > 0 && k !== 'all_declined') {
       list.slice(0, 5).forEach((f) => {
         const ms = guests.filter((g) => g.familyId === f.id);
-        const count = ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + 1 + (g.plusOne || 0), 0);
+        const ex = ms.filter((m) => m.status !== 'declined').reduce((s, g) => s + getExpected(g), 0);
+        const ac = ms.filter((m) => m.status !== 'declined' && m.signedIn).reduce((s, g) => s + getActual(g), 0);
         const names = ms.map((m) => m.name).join('、');
-        content += `      · ${f.name}（${names}）${count}人\n`;
+        content += `      · ${f.name}（${names}）预计${ex}/实到${ac}人\n`;
       });
       if (list.length > 5) content += `      · ...等共 ${list.length} 户\n`;
     }
@@ -167,14 +187,20 @@ export const generateSignInList = (
   content += '\n';
   
   const sortedTables = [...tables].sort((a, b) => a.tableNumber - b.tableNumber);
-  let grandTotal = 0;
+  let grandExpected = 0;
+  let grandActual = 0;
   
   sortedTables.forEach(table => {
     const tableGuests = guests.filter(g => g.tableId === table.id && g.status !== 'declined');
     if (tableGuests.length === 0) return;
+
+    const tableExpected = tableGuests.reduce((s, g) => s + getExpected(g), 0);
+    const tableActual = tableGuests.filter(g => g.signedIn).reduce((s, g) => s + getActual(g), 0);
+    grandExpected += tableExpected;
+    grandActual += tableActual;
     
     content += `【第${table.tableNumber}桌】${table.tableName}\n`;
-    content += '-'.repeat(60) + '\n';
+    content += '-'.repeat(70) + '\n';
     
     const familyGroups = new Map<string, Guest[]>();
     tableGuests.forEach(g => {
@@ -187,44 +213,61 @@ export const generateSignInList = (
     familyGroups.forEach((familyMembers, key) => {
       if (key.startsWith('__ungrouped_')) {
         familyMembers.forEach(g => {
-          const total = g.plusOne + 1;
-          grandTotal += total;
+          const ex = getExpected(g);
+          const ac = getActual(g);
+          const signMark = g.signedIn ? `✓` : '○';
           const dietary = g.dietary && g.dietary !== '无' ? `【${g.dietary}】` : '';
-          content += `${String(idx).padStart(2, '0')}. ${g.name.padEnd(8, ' ')}  ${g.phone.padEnd(13, ' ')}  ${total}人  ${dietary}\n`;
+          const actualStr = g.signedIn ? `实到${ac}人` : `未签到`;
+          content += `${String(idx).padStart(2, '0')}. ${signMark} ${g.name.padEnd(8, ' ')}  ${g.phone.padEnd(13, ' ')}  预计${ex}/${actualStr}  ${dietary}\n`;
           idx++;
         });
       } else {
         const family = getFamily(key);
-        const total = familyMembers.reduce((s, g) => s + g.plusOne + 1, 0);
-        grandTotal += total;
+        const ex = familyMembers.reduce((s, g) => s + getExpected(g), 0);
+        const ac = familyMembers.filter(g => g.signedIn).reduce((s, g) => s + getActual(g), 0);
         const names = familyMembers.map(g => g.name).join('、');
         const phones = familyMembers.map(g => g.phone).filter(Boolean).join('/');
         const dietaries = familyMembers.map(g => g.dietary && g.dietary !== '无' ? g.dietary : '').filter(Boolean);
         const dietaryNote = dietaries.length > 0 ? `【${dietaries.join('、')}】` : '';
-        content += `${String(idx).padStart(2, '0')}. 👨‍👩‍👧${family?.name || '家庭'}：${names}\n`;
+        const allSigned = familyMembers.every(g => g.signedIn);
+        const signMark = allSigned ? '✓' : familyMembers.some(g => g.signedIn) ? '◐' : '○';
+        content += `${String(idx).padStart(2, '0')}. ${signMark} 👨‍👩‍👧${family?.name || '家庭'}：${names}\n`;
         content += `     电话：${phones}\n`;
-        content += `     共 ${total} 人 ${dietaryNote}\n`;
+        content += `     预计${ex}/实到${ac}人 ${dietaryNote}\n`;
         idx++;
       }
     });
     
-    const tableTotal = tableGuests.reduce((s, g) => s + g.plusOne + 1, 0);
-    content += `\n                                     本桌合计：${tableGuests.length}位 共${tableTotal}人\n\n`;
+    const diff = tableActual - tableExpected;
+    const diffLabel = diff > 0 ? `多来+${diff}` : diff < 0 ? `少来${diff}` : '持平';
+    content += `\n                                     本桌合计：预计${tableExpected}/实到${tableActual}人 (${diffLabel})\n\n`;
   });
   
-  const unassigned = guests.filter(g => !g.tableId && g.status !== 'declined');
+  const unassigned = activeGuests.filter(g => !g.tableId);
+  const unassignedExpected = unassigned.reduce((s, g) => s + getExpected(g), 0);
+  const unassignedActual = unassigned.filter(g => g.signedIn).reduce((s, g) => s + getActual(g), 0);
+  grandExpected += unassignedExpected;
+  grandActual += unassignedActual;
+
   if (unassigned.length > 0) {
     content += '【未安排座位】\n';
-    content += '-'.repeat(60) + '\n';
+    content += '-'.repeat(70) + '\n';
     unassigned.forEach((g, i) => {
-      const total = g.plusOne + 1;
-      content += `${String(i + 1).padStart(2, '0')}. ${g.name.padEnd(8, ' ')}  ${g.phone.padEnd(13, ' ')}  ${total}人\n`;
+      const ex = getExpected(g);
+      const ac = getActual(g);
+      const signMark = g.signedIn ? '✓' : '○';
+      const actualStr = g.signedIn ? `实到${ac}人` : '未签到';
+      content += `${String(i + 1).padStart(2, '0')}. ${signMark} ${g.name.padEnd(8, ' ')}  ${g.phone.padEnd(13, ' ')}  预计${ex}/${actualStr}\n`;
     });
+    content += `\n                                     未分桌合计：预计${unassignedExpected}/实到${unassignedActual}人\n\n`;
   }
   
-  content += '\n' + '='.repeat(60) + '\n';
-  content += `总人数：${grandTotal} 人\n`;
-  
+  content += '='.repeat(70) + '\n';
+  const grandDiff = grandActual - grandExpected;
+  const grandDiffLabel = grandDiff > 0 ? `多来+${grandDiff}` : grandDiff < 0 ? `少来${grandDiff}` : '持平';
+  content += `【全场总计】预计 ${grandExpected} / 实到 ${grandActual} 人 (${grandDiffLabel})\n`;
+  content += '='.repeat(70) + '\n';
+
   return content;
 };
 

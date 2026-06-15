@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage, Family, PaymentCategory, MilestoneStatus } from '@/types';
+import { AppState, Guest, Table, SeatingRule, TimelineItem, BudgetItem, Payment, InspirationImage, Family, PaymentCategory, MilestoneStatus, GiftRecord } from '@/types';
 import { loadFromStorage, saveToStorage, resetToMockData, generateId } from '@/utils';
 
 interface SeatingCheckResult {
@@ -26,6 +26,7 @@ interface AppStore extends AppState {
   // Families batch
   updateFamilyRelation: (familyId: string, relation: Guest['relation']) => void;
   updateFamilyStatus: (familyId: string, status: Guest['status']) => void;
+  moveFamilyToTable: (familyId: string, targetTableId: string) => SeatingCheckResult;
   
   // Tables
   addTable: (table: Omit<Table, 'id'>) => void;
@@ -59,6 +60,12 @@ interface AppStore extends AppState {
   addInspirationImage: (image: Omit<InspirationImage, 'id'>) => void;
   deleteInspirationImage: (id: string) => void;
   
+  // Gift Records
+  addGiftRecord: (record: Omit<GiftRecord, 'id'>) => void;
+  updateGiftRecord: (id: string, record: Partial<GiftRecord>) => void;
+  deleteGiftRecord: (id: string) => void;
+  markGiftReturned: (id: string) => void;
+  
   // Settings
   setWeddingDate: (date: string) => void;
   setCoupleNames: (names: string) => void;
@@ -71,10 +78,10 @@ const useAppStore = create<AppStore>((set, get) => {
   const initialState = loadFromStorage();
   
   const saveState = () => {
-    const { guests, families, tables, seatingRules, timeline, budgetCategories, budgetItems, payments, inspirationImages, weddingDate, coupleNames } = get();
+    const { guests, families, tables, seatingRules, timeline, budgetCategories, budgetItems, payments, inspirationImages, giftRecords, weddingDate, coupleNames } = get();
     saveToStorage({
       guests, families, tables, seatingRules, timeline, budgetCategories, budgetItems,
-      payments, inspirationImages, weddingDate, coupleNames,
+      payments, inspirationImages, giftRecords, weddingDate, coupleNames,
     });
   };
 
@@ -390,6 +397,62 @@ const useAppStore = create<AppStore>((set, get) => {
       saveState();
     },
 
+    moveFamilyToTable: (familyId, targetTableId) => {
+      const state = get();
+      const members = state.guests.filter(
+        (g) => g.familyId === familyId && g.status !== 'declined'
+      );
+      if (members.length === 0) {
+        return { allowed: false, reason: '该家庭没有需要入座的成员' };
+      }
+
+      const targetTable = state.tables.find((t) => t.id === targetTableId);
+      if (!targetTable) {
+        return { allowed: false, reason: '目标桌位不存在' };
+      }
+
+      const currentAtTarget = state.guests.filter(
+        (g) => g.tableId === targetTableId && g.status !== 'declined' && g.familyId !== familyId
+      ).length;
+      const membersAlreadyThere = members.filter((g) => g.tableId === targetTableId).length;
+      const slotsNeeded = members.length - membersAlreadyThere;
+      const slotsAvailable = targetTable.capacity - currentAtTarget - membersAlreadyThere;
+
+      if (slotsNeeded > slotsAvailable) {
+        const names = members.map((m) => m.name).join('、');
+        return {
+          allowed: false,
+          reason: `「${names}」共${members.length}人需要${slotsNeeded}个座位，第${targetTable.tableNumber}桌仅剩${slotsAvailable}个空位（还差${slotsNeeded - slotsAvailable}位），建议换大桌或拆分`,
+        };
+      }
+
+      for (const m of members) {
+        const check = get().checkSeatingRules(m.id, targetTableId);
+        if (!check.allowed) {
+          const others = members.filter((mm) => mm.id !== m.id);
+          const otherNames = others.map((o) => o.name).join('、');
+          return {
+            allowed: false,
+            reason: `${m.name} 无法换到第${targetTable.tableNumber}桌：${check.reason}。整户未移动（${otherNames}保持原位）`,
+          };
+        }
+      }
+
+      const updatedGuests = state.guests.map((g) => {
+        if (g.familyId === familyId && g.status !== 'declined') {
+          return { ...g, tableId: targetTableId };
+        }
+        return g;
+      });
+      set({ guests: updatedGuests });
+      saveState();
+
+      return {
+        allowed: true,
+        reason: `整户 ${members.length} 人已换到第${targetTable.tableNumber}桌`,
+      };
+    },
+
     // Timeline
     addTimelineItem: (item) => {
       const newItem = { ...item, id: generateId() };
@@ -468,6 +531,31 @@ const useAppStore = create<AppStore>((set, get) => {
     },
     deleteInspirationImage: (id) => {
       set((state) => ({ inspirationImages: state.inspirationImages.filter((i) => i.id !== id) }));
+      saveState();
+    },
+
+    // Gift Records
+    addGiftRecord: (record) => {
+      const newRecord: GiftRecord = { ...record, id: generateId() };
+      set((state) => ({ giftRecords: [...(state.giftRecords || []), newRecord] }));
+      saveState();
+    },
+    updateGiftRecord: (id, record) => {
+      set((state) => ({
+        giftRecords: (state.giftRecords || []).map((r) => (r.id === id ? { ...r, ...record } : r)),
+      }));
+      saveState();
+    },
+    deleteGiftRecord: (id) => {
+      set((state) => ({ giftRecords: (state.giftRecords || []).filter((r) => r.id !== id) }));
+      saveState();
+    },
+    markGiftReturned: (id) => {
+      set((state) => ({
+        giftRecords: (state.giftRecords || []).map((r) =>
+          r.id === id ? { ...r, giftReturned: true, returnedAt: new Date().toISOString() } : r
+        ),
+      }));
       saveState();
     },
 

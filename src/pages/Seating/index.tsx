@@ -34,6 +34,7 @@ const SeatingPage = () => {
     updateTable,
     deleteTable,
     assignGuestToTable,
+    moveFamilyToTable: storeMoveFamily,
     addSeatingRule,
     deleteSeatingRule,
     checkSeatingRules,
@@ -301,15 +302,12 @@ const SeatingPage = () => {
   };
 
   const moveFamilyToTable = (familyId: string, targetTableId: string) => {
-    const members = guests.filter((g) => g.familyId === familyId);
-    for (const m of members) {
-      const result = assignGuestToTable(m.id, targetTableId);
-      if (!result.allowed) {
-        showToast('error', `${m.name} 换桌失败：${result.reason}`);
-        return;
-      }
+    const result = storeMoveFamily(familyId, targetTableId);
+    if (!result.allowed) {
+      showToast('error', result.reason || '整户换桌失败');
+    } else {
+      showToast('success', result.reason || '整户换桌完成，签到页/宾客名单同步更新');
     }
-    showToast('success', '整户换桌完成，签到页/宾客名单同步更新');
   };
 
   const generateTableCardText = (table: Table): string => {

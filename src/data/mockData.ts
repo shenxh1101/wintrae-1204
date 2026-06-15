@@ -104,4 +104,11 @@ export const mockData: AppState = {
     { id: 'c11', budgetItemId: 'bi5', name: '催精修 & 底片交付', amount: 0, dueDate: '2026-07-10', status: 'pending', category: 'check', milestoneStatus: 'todo', notes: '婚礼后1周催精修小样，2周拿全部底片' },
   ],
   inspirationImages: [],
+  giftRecords: [
+    { id: 'gr1', familyId: 'f1', guestId: 'g1', amount: 2000, receivedBy: '新郎', receivedAt: '2026-07-01T10:30:00', giftReturned: false, returnedAt: null, notes: '' },
+    { id: 'gr2', familyId: 'f2', guestId: 'g3', amount: 1600, receivedBy: '新娘', receivedAt: '2026-07-01T10:45:00', giftReturned: false, returnedAt: null, notes: '微信转账' },
+    { id: 'gr3', familyId: 'f3', guestId: 'g5', amount: 1200, receivedBy: '新郎', receivedAt: '2026-07-01T11:00:00', giftReturned: true, returnedAt: '2026-07-05T09:00:00', notes: '已回礼' },
+    { id: 'gr4', familyId: null, guestId: 'g7', amount: 800, receivedBy: '新娘', receivedAt: '2026-07-01T11:15:00', giftReturned: false, returnedAt: null, notes: '同事代表' },
+    { id: 'gr5', familyId: 'f4', guestId: 'g9', amount: 3000, receivedBy: '新郎', receivedAt: '2026-07-01T11:30:00', giftReturned: false, returnedAt: null, notes: '' },
+  ],
 };

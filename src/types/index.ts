@@ -107,6 +107,19 @@ export interface AppState {
   budgetItems: BudgetItem[];
   payments: Payment[];
   inspirationImages: InspirationImage[];
+  giftRecords: GiftRecord[];
   weddingDate: string;
   coupleNames: string;
+}
+
+export interface GiftRecord {
+  id: string;
+  familyId: string | null;
+  guestId: string | null;
+  amount: number;
+  receivedBy: string;
+  receivedAt: string;
+  giftReturned: boolean;
+  returnedAt: string | null;
+  notes: string;
 }
